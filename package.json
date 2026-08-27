@@ -52,6 +52,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
+    "build": "npx esbuild index.ts --bundle --platform=node --format=esm --external:@earendil-works/* --minify --outfile=dist/bundle.js",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts",
@@ -61,7 +62,7 @@
   },
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./dist/bundle.js"
     ],
     "skills": [
       "./skills"
