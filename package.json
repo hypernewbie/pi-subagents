@@ -62,7 +62,7 @@
   },
   "pi": {
     "extensions": [
-      "./dist/bundle.js"
+      "./index.ts"
     ],
     "skills": [
       "./skills"
