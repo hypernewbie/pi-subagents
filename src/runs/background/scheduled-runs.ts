@@ -155,9 +155,28 @@ function assertScheduleRoot(root: string, projectCwd: string | undefined, create
 	}
 	// [UAA] With centralised storage, the schedule root lives under ~/.pi/agent/projects/
 	// rather than inside the project directory. Accept paths under the agent dir as trusted.
-	const agentDir = getAgentDir();
+	const agentDir = path.resolve(getAgentDir());
+	let realAgentDir = agentDir;
+	try { realAgentDir = fs.realpathSync(agentDir); } catch { /* best effort */ }
+
 	const resolvedRoot = path.resolve(root);
-	if (pathWithin(agentDir, resolvedRoot)) {
+	let realRoot = resolvedRoot;
+	try { realRoot = fs.realpathSync(resolvedRoot); } catch { /* best effort */ }
+
+	const subagentsDir = path.resolve(getProjectSubagentsDir(projectCwd));
+	let realSubagentsDir = subagentsDir;
+	try { realSubagentsDir = fs.realpathSync(subagentsDir); } catch { /* best effort */ }
+
+	if (
+		pathWithin(agentDir, resolvedRoot)
+		|| pathWithin(realAgentDir, realRoot)
+		|| pathWithin(realAgentDir, resolvedRoot)
+		|| pathWithin(agentDir, realRoot)
+		|| pathWithin(subagentsDir, resolvedRoot)
+		|| pathWithin(realSubagentsDir, realRoot)
+		|| pathWithin(realSubagentsDir, resolvedRoot)
+		|| pathWithin(subagentsDir, realRoot)
+	) {
 		if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
 		return;
 	}
