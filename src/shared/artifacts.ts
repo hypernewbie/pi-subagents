@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CHAIN_RUNS_DIR, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
@@ -103,31 +104,28 @@ function filesIncludeProjectArtifacts(files: unknown): boolean | undefined {
 }
 
 /** Returns a package-publishing warning when project artifacts can enter npm packages. */
-export function getProjectArtifactPackagingWarning(cwd: string): string | undefined {
-	const packagePath = path.join(cwd, "package.json");
-	if (!fs.existsSync(packagePath)) return undefined;
+export function getProjectArtifactPackagingWarning(_cwd: string): string | undefined {
+	// [UAA] Subagent project artifacts are centralised outside project repositories, so packaging warnings are unnecessary.
+	return undefined;
+}
 
-	let packageJson: Record<string, unknown>;
-	try {
-		const parsed: unknown = JSON.parse(fs.readFileSync(packagePath, "utf-8"));
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-		packageJson = parsed as Record<string, unknown>;
-	} catch {
-		return undefined;
-	}
-
-	const filesIncludeArtifacts = filesIncludeProjectArtifacts(packageJson.files);
-	if (filesIncludeArtifacts === false) return undefined;
-
-	const npmIgnorePath = path.join(cwd, ".npmignore");
-	const ignorePath = fs.existsSync(npmIgnorePath) ? npmIgnorePath : path.join(cwd, ".gitignore");
-	if (filesIncludeArtifacts === undefined && ignoreFileExcludesProjectArtifacts(ignorePath)) return undefined;
-
-	return "Project-scoped subagent artifacts can be included when this package is published. Add '.pi/subagents/' to .npmignore, restrict package.json files, or set artifactDir to 'session' or 'temp'.";
+// [UAA] Project hash for centralised workspace storage
+function projectHash(cwd: string): string {
+	return createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 20);
 }
 
 export function getProjectSubagentsDir(cwd: string): string {
-	return path.join(cwd, PROJECT_SUBAGENTS_RELATIVE_DIR);
+	// [UAA] Centralise project-scoped subagent data under ~/.pi/agent/projects/<hash>/
+	const dir = path.join(getAgentDir(), "projects", projectHash(cwd));
+	if (!fs.existsSync(dir)) {
+		try {
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(path.join(dir, "_project_root.txt"), path.resolve(cwd), "utf-8");
+		} catch {
+			// Best-effort directory creation
+		}
+	}
+	return dir;
 }
 
 export function getProjectArtifactsDir(cwd: string): string {
@@ -279,3 +277,74 @@ export function cleanupAllArtifactDirs(maxAgeDays: number): void {
 		}
 	}
 }
+
+// [UAA] Sweep orphaned session companion directories on boot
+export function cleanupOrphanedSessionDirs(): void {
+	const sessionsBase = path.join(getAgentDir(), "sessions");
+	if (!fs.existsSync(sessionsBase)) return;
+
+	let workspaceDirs: string[];
+	try {
+		workspaceDirs = fs.readdirSync(sessionsBase);
+	} catch {
+		return;
+	}
+
+	for (const ws of workspaceDirs) {
+		const wsPath = path.join(sessionsBase, ws);
+		try {
+			const wsStat = fs.statSync(wsPath);
+			if (!wsStat.isDirectory()) continue;
+
+			const entries = fs.readdirSync(wsPath);
+			const jsonlStems = new Set(
+				entries.filter((e) => e.endsWith(".jsonl")).map((e) => e.slice(0, -6)),
+			);
+
+			for (const entry of entries) {
+				if (entry === "subagent-artifacts" || entry.endsWith(".jsonl")) continue;
+				const entryPath = path.join(wsPath, entry);
+				try {
+					const entryStat = fs.statSync(entryPath);
+					if (entryStat.isDirectory() && !jsonlStems.has(entry)) {
+						// Orphaned companion directory without matching .jsonl session
+						fs.rmSync(entryPath, { recursive: true, force: true });
+					}
+				} catch {
+					// Best-effort cleanup
+				}
+			}
+		} catch {
+			// Best-effort cleanup
+		}
+	}
+}
+
+// [UAA] Clean up centralised project directories untouched for 30+ days
+export function cleanupStaleProjectDirs(): void {
+	const projectsBase = path.join(getAgentDir(), "projects");
+	if (!fs.existsSync(projectsBase)) return;
+
+	const maxAgeMs = 30 * 24 * 60 * 60 * 1000;
+	const cutoff = Date.now() - maxAgeMs;
+
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(projectsBase);
+	} catch {
+		return;
+	}
+
+	for (const entry of entries) {
+		const fullPath = path.join(projectsBase, entry);
+		try {
+			const stat = fs.statSync(fullPath);
+			if (stat.isDirectory() && stat.mtimeMs < cutoff) {
+				fs.rmSync(fullPath, { recursive: true, force: true });
+			}
+		} catch {
+			// Best-effort cleanup
+		}
+	}
+}
+

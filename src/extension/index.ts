@@ -23,7 +23,7 @@ import { discoverAgents, discoverAgentsAll, type AgentConfig, type AgentScope } 
 import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { registerRuntimeAgentEventListener } from "../agents/runtime-agent-events.ts";
 import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
-import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
+import { cleanupAllArtifactDirs, cleanupOldArtifacts, cleanupOrphanedSessionDirs, cleanupStaleProjectDirs, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import { currentCompletionOwnerId } from "../shared/completion-owner.ts";
@@ -419,6 +419,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const tempArtifactsDir = getArtifactsDir(null);
 	const artifactCleanupDays = config.artifactConfig?.cleanupDays ?? DEFAULT_ARTIFACT_CONFIG.cleanupDays;
 	cleanupAllArtifactDirs(artifactCleanupDays);
+	// [UAA] Sweep orphaned session companion dirs and stale project storage on boot
+	cleanupOrphanedSessionDirs();
+	cleanupStaleProjectDirs();
 	const resultIndexCleanupTimer = setTimeout(() => {
 		try {
 			cleanupResultIndexes(DIRS.results);
