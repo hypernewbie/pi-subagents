@@ -6,6 +6,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { shortenPath } from "../../shared/formatters.ts";
+import { getAgentDir } from "../../shared/utils.ts";
 import type { AsyncStatus, Details, ExtensionConfig } from "../../shared/types.ts";
 import type { SubagentParamsLike } from "../foreground/subagent-executor.ts";
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
@@ -149,6 +150,14 @@ function pathWithin(root: string, candidate: string): boolean {
 
 function assertScheduleRoot(root: string, projectCwd: string | undefined, create: boolean): void {
 	if (!projectCwd) {
+		if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+		return;
+	}
+	// [UAA] With centralised storage, the schedule root lives under ~/.pi/agent/projects/
+	// rather than inside the project directory. Accept paths under the agent dir as trusted.
+	const agentDir = getAgentDir();
+	const resolvedRoot = path.resolve(root);
+	if (pathWithin(agentDir, resolvedRoot)) {
 		if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
 		return;
 	}
