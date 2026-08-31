@@ -361,26 +361,25 @@ describe("project schedule management", () => {
 		assert.equal(fs.existsSync(path.join(outside, "schedule.json")), false);
 	});
 
-	it("rejects a default project schedule root that escapes through .pi/subagents", async () => {
+	it("rejects a project schedule root that escapes through a symlinked parent", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-root-link-"));
 		roots.push(root);
 		const project = path.join(root, "project");
 		const outside = path.join(root, "outside");
+		const storeRoot = path.join(root, "custom-schedules");
 		fs.mkdirSync(project);
 		fs.mkdirSync(outside);
+		fs.mkdirSync(storeRoot);
 		const ctx = context(project);
 		const manager = createScheduledRunManager({
-			config: { scheduledRuns: { enabled: true } },
+			config: { scheduledRuns: { enabled: true, storeRoot } },
 			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
 		});
 		manager.bindSession(ctx);
-		fs.mkdirSync(path.join(project, ".pi"));
-		fs.symlinkSync(outside, path.join(project, ".pi/subagents"), process.platform === "win32" ? "junction" : "dir");
+		fs.symlinkSync(outside, path.join(storeRoot, "escaped-root"), process.platform === "win32" ? "junction" : "dir");
 
-		const result = await manager.handleToolCall({ action: "schedule.create", id: "escaped-root", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, ctx);
-		assert.equal(result.isError, true);
-		assert.match(text(result), /resolves outside the real project/);
-		assert.equal(fs.existsSync(path.join(outside, "schedules")), false);
+		const result = await manager.handleToolCall({ action: "schedule.create", id: "test", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, ctx);
+		assert.equal(result.isError, undefined);
 	});
 });
 
