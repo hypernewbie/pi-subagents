@@ -2,9 +2,11 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { getPackageRoot } from "../../shared/package-root.ts";
 import type { AsyncStatus } from "../../shared/types.ts";
 import { MISSION_BINDING_FILE } from "../../missions/lifecycle.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "./active-run-index.ts";
@@ -711,7 +713,7 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 				cursor,
 				runBudget,
 				resultBudget,
-				workerUrl: options.discoveryWorkerUrl ?? new URL("../../../async-retention-discovery-worker.mjs", import.meta.url),
+				workerUrl: options.discoveryWorkerUrl ?? pathToFileURL(path.join(getPackageRoot(), "async-retention-discovery-worker.mjs")),
 				signal: options.signal,
 			});
 		} catch (error) {

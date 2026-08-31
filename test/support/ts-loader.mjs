@@ -90,6 +90,20 @@ export const Key = {
   ctrlShift: (k) => k,
 };
 
+export function isKeyRelease() { return false; }
+export function matchesKey() { return false; }
+export function fuzzyFilter(items, query, text = (item) => String(item)) {
+  const needle = String(query).toLowerCase();
+  return items.filter((item) => text(item).toLowerCase().includes(needle));
+}
+
+export class Input {
+  constructor() { this.focused = false; this.value = ""; }
+  getText() { return this.value; }
+  setText(value) { this.value = String(value); }
+  handleInput() {}
+}
+
 export function truncateToWidth(text, width) {
   return String(text).slice(0, width);
 }

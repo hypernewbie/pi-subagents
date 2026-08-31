@@ -14,6 +14,7 @@ import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext,
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
+import { getPackageRoot } from "../../shared/package-root.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
@@ -530,7 +531,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	const launchBarrierToken = hasRevivalLease ? undefined : runnerProcessInstanceId;
 	const launchConfig = { ...cfg, runnerProcessInstanceId, ...(launchBarrierToken ? { launchBarrierToken } : {}) };
 	writePrivateAtomicJson(cfgPath, launchConfig);
-	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
+	const runner = path.join(getPackageRoot(), "src", "runs", "background", "subagent-runner.ts");
 	const nodeCommand = resolveNodeExecutable();
 	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; id?: unknown; sessionId?: unknown; completionOwnerId?: unknown; revivalLease?: unknown };
 	const launchAsyncDir = typeof launchForStartup.asyncDir === "string" ? launchForStartup.asyncDir : undefined;

@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentScope, type AgentSource } from "../agents/agents.ts";
 import { resolveExecutionAgentScope } from "../agents/agent-scope.ts";
 import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../agents/skills.ts";
@@ -10,6 +9,7 @@ import { resolveModelScopesForAgent } from "../runs/shared/model-scope.ts";
 import { applyThinkingSuffix, resolvePiLaunchToolPlan, type PiLaunchToolPlan } from "../runs/shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, normalizeSingleOutputOverride, resolveSingleOutputPath } from "../runs/shared/single-output.ts";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
+import { getPackageRoot } from "../shared/package-root.ts";
 import { resolveEffectiveThinking } from "../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, type ArtifactDirPreference, type ArtifactPaths, type JsonSchemaObject, type OutputMode } from "../shared/types.ts";
@@ -179,7 +179,7 @@ export type SubagentLaunchContractResult =
 	| { ok: false; code: SubagentLaunchContractReasonCode; message: string; diagnostics: SubagentLaunchContractDiagnostic[] };
 
 function packageVersion(): string {
-	const packagePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
+	const packagePath = path.join(getPackageRoot(), "package.json");
 	const parsed = JSON.parse(fs.readFileSync(packagePath, "utf-8")) as { version?: unknown };
 	if (typeof parsed.version !== "string" || !parsed.version.trim()) {
 		throw new Error(`Invalid package version in '${packagePath}'.`);

@@ -2,10 +2,10 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { PROJECT_SUBAGENTS_RELATIVE_DIR } from "../shared/artifacts.ts";
+import { LEGACY_PROJECT_SUBAGENTS_RELATIVE_DIR } from "../shared/project-store.ts";
 
-const IGNORED_CHANGE_PREFIXES = [`${PROJECT_SUBAGENTS_RELATIVE_DIR}/`, "tmp/", "node_modules/"];
-const IGNORED_CHANGE_PATHS = new Set([PROJECT_SUBAGENTS_RELATIVE_DIR, "tmp", "node_modules"]);
+const IGNORED_CHANGE_PREFIXES = [`${LEGACY_PROJECT_SUBAGENTS_RELATIVE_DIR}/`, "tmp/", "node_modules/"];
+const IGNORED_CHANGE_PATHS = new Set([LEGACY_PROJECT_SUBAGENTS_RELATIVE_DIR, "tmp", "node_modules"]);
 const IGNORED_CHANGE_SEGMENTS = new Set([".git", "node_modules"]);
 
 const DEFAULT_MAX_HASH_FILE_BYTES = 64 * 1024 * 1024;

@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
 	encodeNestedPathEnv,
 	parseNestedPathEnv,
@@ -23,6 +22,7 @@ import {
 	STRUCTURED_OUTPUT_CAPTURE_ENV,
 	STRUCTURED_OUTPUT_SCHEMA_ENV,
 } from "./structured-output.ts";
+import { getPackageRoot } from "../../shared/package-root.ts";
 import {
 	TEMP_ROOT_DIR,
 	type JsonSchemaObject,
@@ -98,21 +98,10 @@ function shouldDeliverTaskViaFile(
 	return delivery === "file" || task.length > TASK_ARG_LIMIT;
 }
 const MAX_LAUNCH_RESOLVED_EXTENSION_IDS = 32;
-const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
-	path.dirname(fileURLToPath(import.meta.url)),
-	"subagent-prompt-runtime.ts",
-);
-const FANOUT_CHILD_EXTENSION_PATH = path.join(
-	path.dirname(fileURLToPath(import.meta.url)),
-	"..",
-	"..",
-	"extension",
-	"fanout-child.ts",
-);
-const FAST_MODE_EXTENSION_PATH = path.join(
-	path.dirname(fileURLToPath(import.meta.url)),
-	"fast-mode-extension.ts",
-);
+const PACKAGE_SHARED_DIR = path.join(getPackageRoot(), "src", "runs", "shared");
+const PROMPT_RUNTIME_EXTENSION_PATH = path.join(PACKAGE_SHARED_DIR, "subagent-prompt-runtime.ts");
+const FANOUT_CHILD_EXTENSION_PATH = path.join(getPackageRoot(), "src", "extension", "fanout-child.ts");
+const FAST_MODE_EXTENSION_PATH = path.join(PACKAGE_SHARED_DIR, "fast-mode-extension.ts");
 const FAST_MODE_ALLOWED_MODELS = new Set([
 	"openai-codex/gpt-5.6-luna",
 	"openai-codex/gpt-5.6-sol",

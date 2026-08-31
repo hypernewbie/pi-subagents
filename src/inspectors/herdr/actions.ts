@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { readMissionBinding } from "../../missions/lifecycle.ts";
 import { listMissions, missionRecordPath, resolveMissionStoreLocation } from "../../missions/store.ts";
@@ -8,6 +7,7 @@ import type { MissionStoreConfig } from "../../missions/types.ts";
 import { resolveAuthorityDecision, type AuthorityPolicyConfig } from "../../policy/authority.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { DIRS, type Details, type SubagentState } from "../../shared/types.ts";
+import { getPackageRoot } from "../../shared/package-root.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { resolveSubagentRunId } from "../../runs/background/run-id-resolver.ts";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
@@ -200,7 +200,7 @@ export async function handleHerdrInspectorAction(action: HerdrInspectorAction, p
 	const paneId = extractPaneId(split.data);
 	if (!paneId) return result("Herdr inspector error (PANE_GONE): pane split returned no pane id.", true);
 	const mission = missionForRun(target.asyncDir, deps.cwd, deps.missions, target.runId);
-	const runnerPath = deps.runnerPath ?? fileURLToPath(new URL("../../../inspector-runner.mjs", import.meta.url));
+	const runnerPath = deps.runnerPath ?? path.join(getPackageRoot(), "inspector-runner.mjs");
 	const command = inspectorCommand({
 		runnerPath,
 		asyncDir: target.asyncDir,

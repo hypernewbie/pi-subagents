@@ -91,7 +91,9 @@ function collectSourceFiles(dir: string): string[] {
 test("published extension APIs use supported package entrypoints", async () => {
 	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
 
-	assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
+	assert.deepEqual(packageJson.pi?.extensions, ["./dist/bundle.js"]);
+	assert.equal(packageJson.files?.includes("dist/bundle.js"), true);
+	assert.equal(fs.existsSync(path.join(projectRoot, "dist", "bundle.js")), true);
 	assert.equal(packageJson.files?.includes("index.ts"), true);
 	assert.equal(packageJson.files?.includes("*.mjs"), true);
 	assert.equal(fs.existsSync(path.join(projectRoot, "async-retention-discovery-worker.mjs")), true);
@@ -99,7 +101,8 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.match(entrySource, /import type \{\} from "\.\/src\/types\/pi-runtime-compat\.d\.ts";/);
 	assert.equal(entrySource.includes('export { default } from "./src/extension/index.ts";'), false);
 	assert.match(entrySource, /process\.env\.PI_SUBAGENT_CHILD === "1"/);
-	assert.match(entrySource, /await import\("\.\/src\/extension\/index\.ts"\)/);
+	assert.match(entrySource, /import registerParentExtension from "\.\/src\/extension\/index\.ts";/);
+	assert.doesNotMatch(entrySource, /await import\(/);
 	assert.equal(fs.existsSync(path.join(projectRoot, "src", "api", "delegation.ts")), true);
 	assert.deepEqual(packageJson.exports, {
 		".": "./index.ts",
