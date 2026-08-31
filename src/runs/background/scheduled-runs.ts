@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
+import { ensureProjectSubagentsDir, getProjectSubagentsDir, projectHash } from "../../shared/artifacts.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { shortenPath } from "../../shared/formatters.ts";
 import { getAgentDir } from "../../shared/utils.ts";
@@ -98,9 +98,11 @@ export function scheduledRunsEnabled(config: ExtensionConfig): boolean {
 }
 
 export function scheduledRunStorePath(cwd: string, _sessionId?: string, root?: string): string {
-	if (!root) return path.join(getProjectSubagentsDir(path.resolve(cwd)), "schedules");
-	const projectKey = createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 20);
-	return path.join(root, projectKey);
+	if (!root) {
+		ensureProjectSubagentsDir(cwd);
+		return path.join(getProjectSubagentsDir(cwd), "schedules");
+	}
+	return path.join(root, projectHash(cwd));
 }
 
 export function parseScheduledRunTime(at: string, now = Date.now()): number {
@@ -229,59 +231,46 @@ function resolveSharedGitConfigRoot(projectCwd: string): string | undefined {
 	return undefined;
 }
 
+// [UAA] Strict validation for schedule store roots preventing symlink/junction escapes
 function assertScheduleRoot(root: string, projectCwd: string | undefined, create: boolean): void {
-	if (!projectCwd) {
-		if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-		return;
-	}
-	// [UAA] With centralised storage, the schedule root lives under ~/.pi/agent/projects/
-	// rather than inside the project directory. Accept paths under the agent dir as trusted.
-	const agentDir = path.resolve(getAgentDir());
-	let realAgentDir = agentDir;
-	try { realAgentDir = fs.realpathSync(agentDir); } catch { /* best effort */ }
-
 	const resolvedRoot = path.resolve(root);
-	let realRoot = resolvedRoot;
-	try { realRoot = fs.realpathSync(resolvedRoot); } catch { /* best effort */ }
+	const agentProjectsRoot = path.resolve(path.join(getAgentDir(), "projects"));
 
-	const subagentsDir = path.resolve(getProjectSubagentsDir(projectCwd));
-	let realSubagentsDir = subagentsDir;
-	try { realSubagentsDir = fs.realpathSync(subagentsDir); } catch { /* best effort */ }
-
-	if (
-		pathWithin(agentDir, resolvedRoot)
-		|| pathWithin(realAgentDir, realRoot)
-		|| pathWithin(realAgentDir, resolvedRoot)
-		|| pathWithin(agentDir, realRoot)
-		|| pathWithin(subagentsDir, resolvedRoot)
-		|| pathWithin(realSubagentsDir, realRoot)
-		|| pathWithin(realSubagentsDir, resolvedRoot)
-		|| pathWithin(subagentsDir, realRoot)
-	) {
-		if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-		return;
+	let trustedBase: string;
+	if (pathWithin(agentProjectsRoot, resolvedRoot)) {
+		trustedBase = agentProjectsRoot;
+	} else if (projectCwd) {
+		trustedBase = path.resolve(projectCwd);
+	} else {
+		trustedBase = path.dirname(resolvedRoot);
 	}
-	let projectPath: string;
+
+	let realTrustedBase: string;
 	try {
-		projectPath = fs.realpathSync.native(projectCwd);
+		realTrustedBase = fs.realpathSync.native(trustedBase);
 	} catch (error) {
 		if (!create && (error as NodeJS.ErrnoException).code === "ENOENT") return;
 		throw error;
 	}
-	let existing = root;
+
+	let existing = resolvedRoot;
 	while (!fs.existsSync(existing)) {
 		const parent = path.dirname(existing);
 		if (parent === existing) break;
 		existing = parent;
-	}
+		}
 	const existingPath = fs.realpathSync.native(existing);
-	const sharedGitConfigRoot = pathWithin(projectPath, existingPath) ? undefined : resolveSharedGitConfigRoot(projectCwd);
-	const isTrustedPath = (candidate: string): boolean => pathWithin(projectPath, candidate)
+	// [UAA] Only consult the shared git-config-root when the schedule root is bound
+	// to a project cwd; under the centralised agent-projects root we trust that base alone.
+	const sharedGitConfigRoot = (projectCwd && trustedBase !== agentProjectsRoot)
+		? (pathWithin(realTrustedBase, existingPath) ? undefined : resolveSharedGitConfigRoot(projectCwd))
+		: undefined;
+	const isTrustedPath = (candidate: string): boolean => pathWithin(realTrustedBase, candidate)
 		|| (sharedGitConfigRoot !== undefined && pathWithin(sharedGitConfigRoot, candidate));
-	if (!isTrustedPath(existingPath)) throw new Error(`Project schedule root '${root}' resolves outside the real project.`);
+	if (!isTrustedPath(existingPath)) throw new Error(`Project schedule root '${root}' resolves outside the trusted root.`);
 	if (!create) return;
-	fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-	if (!isTrustedPath(fs.realpathSync.native(root))) throw new Error(`Project schedule root '${root}' resolves outside the real project.`);
+	fs.mkdirSync(resolvedRoot, { recursive: true, mode: 0o700 });
+	if (!isTrustedPath(fs.realpathSync.native(resolvedRoot))) throw new Error(`Project schedule root '${root}' resolves outside the trusted root.`);
 }
 
 function scheduleDir(root: string, id: string, create = false, projectCwd?: string): string {

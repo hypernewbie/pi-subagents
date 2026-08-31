@@ -109,18 +109,71 @@ export function getProjectArtifactPackagingWarning(_cwd: string): string | undef
 	return undefined;
 }
 
-// [UAA] Project hash for centralised workspace storage
-function projectHash(cwd: string): string {
-	return createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 20);
+// [UAA] Resolve canonical project root across subdirectories, git worktrees, and symlinks
+export function resolveCanonicalProjectRoot(cwd: string): string {
+	let current = path.resolve(cwd);
+	try {
+		current = fs.realpathSync.native(current);
+	} catch {
+		try {
+			current = fs.realpathSync(current);
+		} catch {
+			// Lexical fallback when path cannot be resolved
+		}
+	}
+
+	let check = current;
+	while (true) {
+		const gitPath = path.join(check, ".git");
+		try {
+			if (fs.existsSync(gitPath)) {
+				// Handles both .git directories and .git worktree/submodule pointers
+				return check;
+			}
+		} catch {
+			// Continue upward traversal
+		}
+		const packagePath = path.join(check, "package.json");
+		try {
+			if (fs.existsSync(packagePath)) {
+				// Secondary boundary check for non-git projects
+				const parent = path.dirname(check);
+				if (parent === check || !fs.existsSync(path.join(parent, "package.json"))) {
+					return check;
+				}
+			}
+		} catch {
+			// Continue upward traversal
+		}
+		const parent = path.dirname(check);
+		if (parent === check) break;
+		check = parent;
+	}
+	return current;
 }
 
+// [UAA] Deterministic project hash normalised for cross-platform and case-insensitive file systems
+export function projectHash(cwd: string): string {
+	const canonical = resolveCanonicalProjectRoot(cwd);
+	const normalized = process.platform === "win32"
+		? canonical.toLowerCase().replace(/\\/g, "/")
+		: canonical;
+	return createHash("sha256").update(normalized).digest("hex").slice(0, 20);
+}
+
+// [UAA] Pure locator for centralised project subagent storage
 export function getProjectSubagentsDir(cwd: string): string {
-	// [UAA] Centralise project-scoped subagent data under ~/.pi/agent/projects/<hash>/
-	const dir = path.join(getAgentDir(), "projects", projectHash(cwd));
+	return path.join(getAgentDir(), "projects", projectHash(cwd));
+}
+
+// [UAA] Ensure centralised project directory exists with breadcrumb metadata
+export function ensureProjectSubagentsDir(cwd: string): string {
+	const dir = getProjectSubagentsDir(cwd);
 	if (!fs.existsSync(dir)) {
 		try {
-			fs.mkdirSync(dir, { recursive: true });
-			fs.writeFileSync(path.join(dir, "_project_root.txt"), path.resolve(cwd), "utf-8");
+			fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+			const canonical = resolveCanonicalProjectRoot(cwd);
+			fs.writeFileSync(path.join(dir, "_project_root.txt"), `${canonical}\n`, "utf-8");
 		} catch {
 			// Best-effort directory creation
 		}
@@ -278,8 +331,8 @@ export function cleanupAllArtifactDirs(maxAgeDays: number): void {
 	}
 }
 
-// [UAA] Sweep orphaned session companion directories on boot
-export function cleanupOrphanedSessionDirs(): void {
+// [UAA] Sweep orphaned session companion directories with safety age guard
+export function cleanupOrphanedSessionDirs(minAgeHours = 24): void {
 	const sessionsBase = path.join(getAgentDir(), "sessions");
 	if (!fs.existsSync(sessionsBase)) return;
 
@@ -289,6 +342,9 @@ export function cleanupOrphanedSessionDirs(): void {
 	} catch {
 		return;
 	}
+
+	const now = Date.now();
+	const minAgeMs = Math.max(1, minAgeHours) * 60 * 60 * 1000;
 
 	for (const ws of workspaceDirs) {
 		const wsPath = path.join(sessionsBase, ws);
@@ -306,41 +362,14 @@ export function cleanupOrphanedSessionDirs(): void {
 				const entryPath = path.join(wsPath, entry);
 				try {
 					const entryStat = fs.statSync(entryPath);
-					if (entryStat.isDirectory() && !jsonlStems.has(entry)) {
-						// Orphaned companion directory without matching .jsonl session
+					// Safety guard: only remove directories with no matching .jsonl session
+					// that are older than minAgeMs to prevent racing active or initializing sessions
+					if (entryStat.isDirectory() && !jsonlStems.has(entry) && (now - entryStat.mtimeMs > minAgeMs)) {
 						fs.rmSync(entryPath, { recursive: true, force: true });
 					}
 				} catch {
 					// Best-effort cleanup
 				}
-			}
-		} catch {
-			// Best-effort cleanup
-		}
-	}
-}
-
-// [UAA] Clean up centralised project directories untouched for 30+ days
-export function cleanupStaleProjectDirs(): void {
-	const projectsBase = path.join(getAgentDir(), "projects");
-	if (!fs.existsSync(projectsBase)) return;
-
-	const maxAgeMs = 30 * 24 * 60 * 60 * 1000;
-	const cutoff = Date.now() - maxAgeMs;
-
-	let entries: string[];
-	try {
-		entries = fs.readdirSync(projectsBase);
-	} catch {
-		return;
-	}
-
-	for (const entry of entries) {
-		const fullPath = path.join(projectsBase, entry);
-		try {
-			const stat = fs.statSync(fullPath);
-			if (stat.isDirectory() && stat.mtimeMs < cutoff) {
-				fs.rmSync(fullPath, { recursive: true, force: true });
 			}
 		} catch {
 			// Best-effort cleanup
