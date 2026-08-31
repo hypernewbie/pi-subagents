@@ -15,6 +15,7 @@ import {
 	scheduledRunsEnabled,
 	type ScheduledRunManager,
 } from "../../src/runs/background/scheduled-runs.ts";
+import { getProjectSubagentsDir } from "../../src/shared/artifacts.ts";
 import type { ExtensionConfig } from "../../src/shared/types.ts";
 
 type Timer = { callback: () => void; delay: number };
@@ -104,10 +105,12 @@ describe("schedule helpers", () => {
 	});
 
 	it("uses a stable project store independent of session id", () => {
-		const root = path.join("tmp", "schedules");
-		assert.equal(scheduledRunStorePath("project", "a", root), scheduledRunStorePath("project", "b", root));
-		assert.notEqual(scheduledRunStorePath("project", "a", root), scheduledRunStorePath("other", "a", root));
-		assert.equal(scheduledRunStorePath("/project"), path.join(path.resolve("/project"), ".pi/subagents", "schedules"));
+		const root = path.join(os.tmpdir(), "schedules");
+		const projA = path.join(os.tmpdir(), "project-a");
+		const projB = path.join(os.tmpdir(), "project-b");
+		assert.equal(scheduledRunStorePath(projA, "a", root), scheduledRunStorePath(projA, "b", root));
+		assert.notEqual(scheduledRunStorePath(projA, "a", root), scheduledRunStorePath(projB, "a", root));
+		assert.equal(scheduledRunStorePath(projA), path.join(getProjectSubagentsDir(projA), "schedules"));
 	});
 
 	it("parses one-shot and fixed interval forms strictly", () => {
@@ -367,19 +370,21 @@ describe("project schedule management", () => {
 		const project = path.join(root, "project");
 		const outside = path.join(root, "outside");
 		const storeRoot = path.join(root, "custom-schedules");
-		fs.mkdirSync(project);
-		fs.mkdirSync(outside);
-		fs.mkdirSync(storeRoot);
+		fs.mkdirSync(project, { recursive: true });
+		fs.mkdirSync(outside, { recursive: true });
+		fs.mkdirSync(storeRoot, { recursive: true });
 		const ctx = context(project);
+		const storePath = scheduledRunStorePath(project, undefined, storeRoot);
+		fs.symlinkSync(outside, storePath, process.platform === "win32" ? "junction" : "dir");
+
 		const manager = createScheduledRunManager({
-			config: { scheduledRuns: { enabled: true, storeRoot } },
+			config: { scheduledRuns: { enabled: true } },
+			storeRoot,
 			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
 		});
-		manager.bindSession(ctx);
-		fs.symlinkSync(outside, path.join(storeRoot, "escaped-root"), process.platform === "win32" ? "junction" : "dir");
 
-		const result = await manager.handleToolCall({ action: "schedule.create", id: "test", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, ctx);
-		assert.equal(result.isError, undefined);
+		assert.throws(() => manager.bindSession(ctx), /resolves outside the trusted root/);
+		assert.equal(fs.existsSync(path.join(outside, "schedule.json")), false);
 	});
 });
 

@@ -2406,7 +2406,10 @@ function captureParallelWorktreeDiffs(
 }
 
 function ensureParallelProgressFile(cwd: string, group: Extract<RunnerStep, { parallel: SubagentStep[] }>): void {
-	// [UAA] Place parallel progress file in centralised project directory rather than repo root
+	if (group.progress?.path) {
+		if (group.progress.initialize !== false) writeInitialProgressFile(path.dirname(group.progress.path));
+		return;
+	}
 	const progressDir = getProjectSubagentsDir(cwd);
 	const progressPath = path.join(progressDir, "progress.md");
 	if (!group.parallel.some((task) => task.task.includes(`Update progress at: ${progressPath}`) || task.task.includes(`Update progress at: ${path.join(cwd, "progress.md")}`))) return;

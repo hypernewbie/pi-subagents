@@ -1,9 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ensureProjectSubagentsDir, getProjectSubagentsDir, projectHash } from "../../shared/artifacts.ts";
+import { ensureProjectStore, projectHash } from "../../shared/project-store.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { shortenPath } from "../../shared/formatters.ts";
 import { getAgentDir } from "../../shared/utils.ts";
@@ -12,6 +12,11 @@ import type { SubagentParamsLike } from "../foreground/subagent-executor.ts";
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { previewSimpleWorkflowRun } from "../../workflows/scripted-workflow.ts";
+
+export interface ScheduleStoreLocation {
+	root: string;
+	trustedBase: string;
+}
 
 export const SCHEDULED_RUN_ACTIONS = [
 	"schedule.create",
@@ -88,12 +93,18 @@ export function scheduledRunsEnabled(config: ExtensionConfig): boolean {
 	return config.scheduledRuns?.enabled !== false;
 }
 
-export function scheduledRunStorePath(cwd: string, _sessionId?: string, root?: string): string {
-	if (!root) {
-		ensureProjectSubagentsDir(cwd);
-		return path.join(getProjectSubagentsDir(cwd), "schedules");
+export function resolveScheduleStoreLocation(cwd: string, storeRoot?: string): ScheduleStoreLocation {
+	const key = projectHash(cwd);
+	if (!storeRoot) {
+		const trustedBase = path.join(getAgentDir(), "projects");
+		return { trustedBase, root: path.join(trustedBase, key, "schedules") };
 	}
-	return path.join(root, projectHash(cwd));
+	const trustedBase = path.resolve(storeRoot);
+	return { trustedBase, root: path.join(trustedBase, key) };
+}
+
+export function scheduledRunStorePath(cwd: string, _sessionId?: string, root?: string): string {
+	return resolveScheduleStoreLocation(cwd, root).root;
 }
 
 export function parseScheduledRunTime(at: string, now = Date.now()): number {
@@ -150,23 +161,18 @@ function pathWithin(root: string, candidate: string): boolean {
 	return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
-// [UAA] Strict validation for schedule store roots preventing symlink/junction escapes
-function assertScheduleRoot(root: string, projectCwd: string | undefined, create: boolean): void {
+// Strict validation for schedule store roots preventing symlink/junction escapes
+function assertScheduleRoot(root: string, trustedBase: string, create: boolean): void {
 	const resolvedRoot = path.resolve(root);
-	const agentProjectsRoot = path.resolve(path.join(getAgentDir(), "projects"));
+	const resolvedTrustedBase = path.resolve(trustedBase);
 
-	let trustedBase: string;
-	if (pathWithin(agentProjectsRoot, resolvedRoot)) {
-		trustedBase = agentProjectsRoot;
-	} else if (projectCwd) {
-		trustedBase = path.resolve(projectCwd);
-	} else {
-		trustedBase = path.dirname(resolvedRoot);
+	if (create) {
+		fs.mkdirSync(resolvedTrustedBase, { recursive: true, mode: 0o700 });
 	}
 
 	let realTrustedBase: string;
 	try {
-		realTrustedBase = fs.realpathSync(trustedBase);
+		realTrustedBase = fs.realpathSync(resolvedTrustedBase);
 	} catch (error) {
 		if (!create && (error as NodeJS.ErrnoException).code === "ENOENT") return;
 		throw error;
@@ -192,8 +198,8 @@ function assertScheduleRoot(root: string, projectCwd: string | undefined, create
 	}
 }
 
-function scheduleDir(root: string, id: string, create = false, projectCwd?: string): string {
-	assertScheduleRoot(root, projectCwd, create);
+function scheduleDir(root: string, id: string, create = false, trustedBase = path.dirname(root)): string {
+	assertScheduleRoot(root, trustedBase, create);
 	const dir = path.join(root, validateScheduleId(id));
 	try {
 		const stat = fs.lstatSync(dir);
@@ -242,19 +248,24 @@ function parseSchedule(value: unknown, file: string): ScheduleRecord {
 
 class ScheduleStore {
 	readonly root: string;
-	private readonly projectCwd?: string;
+	readonly trustedBase: string;
 
-	constructor(root: string, projectCwd?: string) {
-		this.root = root;
-		this.projectCwd = projectCwd;
+	constructor(locationOrRoot: ScheduleStoreLocation | string, trustedBase?: string) {
+		if (typeof locationOrRoot === "string") {
+			this.root = locationOrRoot;
+			this.trustedBase = trustedBase ?? path.dirname(locationOrRoot);
+		} else {
+			this.root = locationOrRoot.root;
+			this.trustedBase = locationOrRoot.trustedBase;
+		}
 	}
 
 	directory(id: string, create = false): string {
-		return scheduleDir(this.root, id, create, this.projectCwd);
+		return scheduleDir(this.root, id, create, this.trustedBase);
 	}
 
 	ids(): string[] {
-		assertScheduleRoot(this.root, this.projectCwd, false);
+		assertScheduleRoot(this.root, this.trustedBase, false);
 		if (!fs.existsSync(this.root)) return [];
 		return fs.readdirSync(this.root, { withFileTypes: true })
 			.filter((entry) => entry.isDirectory() && SCHEDULE_ID.test(entry.name))
@@ -273,7 +284,7 @@ class ScheduleStore {
 
 	/** Like {@link get}, but returns undefined when the schedule no longer exists. */
 	find(id: string): ScheduleRecord | undefined {
-		const file = path.join(scheduleDir(this.root, id, false, this.projectCwd), "schedule.json");
+		const file = path.join(scheduleDir(this.root, id, false, this.trustedBase), "schedule.json");
 		if (!fs.existsSync(file)) return undefined;
 		return parseSchedule(readJson(file, "schedule record"), file);
 	}
@@ -393,7 +404,8 @@ function snapshotContext(ctx: ExtensionContext, cwd: string): ExtensionContext {
 }
 
 export function listScheduledRunSummaries(cwd: string, root?: string): ScheduleRecord[] {
-	return new ScheduleStore(scheduledRunStorePath(cwd, undefined, root), root === undefined ? path.resolve(cwd) : undefined).list();
+	const location = resolveScheduleStoreLocation(cwd, root);
+	return new ScheduleStore(location).list();
 }
 
 export class ScheduledRunManager {
@@ -798,13 +810,16 @@ export class ScheduledRunManager {
 
 	private selectProject(cwd: string, ctx: ExtensionContext): void {
 		const projectCwd = path.resolve(cwd);
-		const root = scheduledRunStorePath(projectCwd, undefined, this.deps.storeRoot);
-		if (path.resolve(ctx.cwd) === projectCwd) this.contexts.set(root, snapshotContext(ctx, projectCwd));
-		else if (!this.contexts.has(root)) throw new Error(`Cannot use project '${projectCwd}' until that project has been opened in this runtime.`);
-		let store = this.stores.get(root);
+		const location = resolveScheduleStoreLocation(projectCwd, this.deps.storeRoot);
+		if (path.resolve(ctx.cwd) === projectCwd) this.contexts.set(location.root, snapshotContext(ctx, projectCwd));
+		else if (!this.contexts.has(location.root)) throw new Error(`Cannot use project '${projectCwd}' until that project has been opened in this runtime.`);
+		let store = this.stores.get(location.root);
 		if (!store) {
-			store = new ScheduleStore(root, this.deps.storeRoot === undefined ? projectCwd : undefined);
-			this.stores.set(root, store);
+			if (!this.deps.storeRoot) {
+				ensureProjectStore(projectCwd);
+			}
+			store = new ScheduleStore(location);
+			this.stores.set(location.root, store);
 			this.restore(store);
 		}
 		this.store = store;

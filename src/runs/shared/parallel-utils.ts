@@ -95,6 +95,10 @@ export interface ParallelStepGroup {
 	concurrency?: number;
 	failFast?: boolean;
 	worktree?: boolean;
+	progress?: {
+		path: string;
+		initialize?: boolean;
+	};
 }
 
 export interface DynamicRunnerGroup {
@@ -115,6 +119,10 @@ export interface DynamicRunnerGroup {
 	capabilityCeiling?: import("./capability-ceiling.ts").ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: import("./capability-ceiling.ts").SubagentCapabilityAudit;
 	thinkingCeiling?: import("../../shared/model-info.ts").ThinkingLevel;
+	progress?: {
+		path: string;
+		initialize?: boolean;
+	};
 }
 
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup | DynamicRunnerGroup;

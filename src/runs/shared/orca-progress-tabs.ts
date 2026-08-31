@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { Message } from "@earendil-works/pi-ai";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
-import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
+import { getProjectSubagentsDir, projectHash } from "../../shared/project-store.ts";
 import { TEMP_ROOT_DIR, type OrcaProgressTabsConfig } from "../../shared/types.ts";
 import { extractTextFromContent, extractToolArgsPreview, getAgentDir } from "../../shared/utils.ts";
 
@@ -165,7 +165,7 @@ interface OrcaObserverManifest {
 
 function observerManifestPath(cwd: string, stem: string): string | undefined {
 	try {
-		const dir = path.join(getProjectSubagentsDir(resolveSequenceScope(cwd)), "views", "orca");
+		const dir = path.join(getProjectSubagentsDir(cwd), "views", "orca");
 		fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 		return path.join(dir, `${stem}.json`);
 	} catch {
@@ -187,21 +187,8 @@ function sleepSync(ms: number): void {
 	Atomics.wait(signal, 0, 0, ms);
 }
 
-function resolveSequenceScope(cwd: string): string {
-	let current = path.resolve(cwd);
-	try { current = fs.realpathSync(current); } catch { /* use the lexical cwd */ }
-	while (true) {
-		try {
-			if (fs.existsSync(path.join(current, ".git"))) return current;
-		} catch { /* keep walking */ }
-		const parent = path.dirname(current);
-		if (parent === current) return path.resolve(cwd);
-		current = parent;
-	}
-}
-
 function sequenceKey(cwd: string): string {
-	return createHash("sha256").update(resolveSequenceScope(cwd)).digest("hex").slice(0, 20);
+	return projectHash(cwd);
 }
 
 function withSequenceLock<T>(root: string, key: string, fn: () => T): T | undefined {

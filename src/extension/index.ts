@@ -418,7 +418,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const summaryInlineToolDisplay = config.inlineToolDisplay === "summary";
 	const tempArtifactsDir = getArtifactsDir(null);
 	const artifactCleanupDays = config.artifactConfig?.cleanupDays ?? DEFAULT_ARTIFACT_CONFIG.cleanupDays;
-	// [UAA] Non-blocking deferred background housekeeping (runs 30s after startup)
+	// Deferred housekeeping (runs 30s after startup)
 	const backgroundCleanupTimer = setTimeout(() => {
 		try {
 			cleanupAllArtifactDirs(artifactCleanupDays);

@@ -132,8 +132,9 @@ describe("public project-panes package export", () => {
 	it("returns a structured error and closes the pane when binding persistence fails", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-public-project-pane-write-failure-"));
 		try {
-			fs.mkdirSync(path.join(root, ".pi"));
-			fs.writeFileSync(path.join(root, ".pi/subagents"), "directory collision");
+			const bindingPath = projectPaneBindingPath(root);
+			fs.mkdirSync(path.dirname(path.dirname(bindingPath)), { recursive: true });
+			fs.writeFileSync(path.dirname(bindingPath), "directory collision");
 			const calls: string[][] = [];
 			const client: ProjectPaneCommandClient = {
 				run: async <T>(args: string[]) => {
