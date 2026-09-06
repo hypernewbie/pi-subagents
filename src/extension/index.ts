@@ -1051,7 +1051,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			state.workflowControllers?.clear();
 			state.workflowChildStops?.clear();
 			clearRuntimeAgentsForPi(pi);
-			clearTimeout(resultIndexCleanupTimer);
+			clearTimeout(backgroundCleanupTimer);
 			clearTimeout(asyncRetentionTimer);
 			asyncRetentionAbort.abort();
 			stopResultWatcher();
