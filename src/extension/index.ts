@@ -950,7 +950,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			runtimeCleaned = true;
 			const shuttingDownParentSession = parentSessionEnvValue;
 			clearRuntimeAgentsForPi(pi);
-			clearTimeout(resultIndexCleanupTimer);
+			clearTimeout(backgroundCleanupTimer);
 			clearTimeout(asyncRetentionTimer);
 			asyncRetentionAbort.abort();
 			stopResultWatcher();
