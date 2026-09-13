@@ -98,6 +98,7 @@ describe("async resume lookup", () => {
 
 			const target = resolveAsyncResumeTarget({ id: "run-missing-cwd" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
 			assert.equal(target.cwd, worktreeCwd);
+			assert.equal(target.managedWorktree, true);
 			fs.rmSync(worktreeCwd, { recursive: true });
 
 			assert.throws(
@@ -138,6 +139,7 @@ describe("async resume lookup", () => {
 
 			const target = resolveAsyncResumeTarget({ id: "run-nested-cwd" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
 			assert.equal(target.cwd, worktreeCwd);
+			assert.equal(target.managedWorktree, true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -291,17 +293,28 @@ describe("async resume lookup", () => {
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				...descriptor,
 				launchContractDigest: "launch-contract-digest",
+				allowNestedSubagents: true,
 				intercomBridge: { mode: "off" },
 				extensionBindings: { "shepherd.dispatch/1": { role: "coder" } },
+				requiredExtensions: [{ id: "provider", path: path.join(root, "provider.mjs") }],
 			});
 			const valid = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
 			assert.equal(valid.launchContractDigest, "launch-contract-digest");
 			assert.equal(valid.recoveryDescriptor?.launchContractDigest, "launch-contract-digest");
+			assert.equal(valid.recoveryDescriptor?.allowNestedSubagents, true);
 			assert.deepEqual(valid.recoveryDescriptor?.intercomBridge, { mode: "off" });
 			assert.deepEqual(valid.recoveryDescriptor?.extensionBindings, { "shepherd.dispatch/1": { role: "coder" } });
+			assert.deepEqual(valid.recoveryDescriptor?.requiredExtensions, [{ id: "provider", path: path.join(root, "provider.mjs") }]);
+			assert.ok(Object.isFrozen(valid.recoveryDescriptor?.requiredExtensions));
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, allowNestedSubagents: "true" });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /allowNestedSubagents/);
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, extensionBindings: { invalid: true } });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /namespace/);
+
+			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, requiredExtensions: [{ id: "unsafe id", path: "/provider.mjs" }] });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /safe id/);
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, sourceRunId: "another-run" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different source run/);
@@ -313,7 +326,7 @@ describe("async resume lookup", () => {
 		}
 	});
 
-	it("normalizes persisted turn-budget state without weakening public input validation", () => {
+	it("ignores removed turn budgets in persisted recovery descriptors", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-turn-budget-"));
 		try {
 			const asyncRoot = path.join(root, "runs");
@@ -354,16 +367,14 @@ describe("async resume lookup", () => {
 
 			const target = resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir });
 
-			assert.deepEqual(target.recoveryDescriptor?.initialTurnBudget, { maxTurns: 8, graceTurns: 2 });
+			assert.equal("initialTurnBudget" in (target.recoveryDescriptor ?? {}), false);
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), {
 				...descriptor,
 				initialTurnBudget: { maxTurns: 8, graceTurns: 2, unrelated: true },
 			});
-			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir }),
-				/recoveryDescriptor\.initialTurnBudget\.unrelated is not supported/,
-			);
+			const malformedLegacy = resolveAsyncResumeTarget({ id: "run-turn-budget" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal("initialTurnBudget" in (malformedLegacy.recoveryDescriptor ?? {}), false);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
