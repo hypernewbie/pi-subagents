@@ -39,6 +39,44 @@ export interface McpServerDefinition {
 	literalEnv?: boolean;
 }
 
+export function isMcpServerDefinition(value: unknown): value is McpServerDefinition {
+	if (!isRecord(value)) return false;
+	for (const field of ["command", "socket", "cwd", "url", "bearerToken", "bearerTokenEnv", "protocolVersion", "httpTransport", "pluginDataDir"] as const) {
+		if (value[field] !== undefined && typeof value[field] !== "string") return false;
+	}
+	for (const field of ["args", "includeTools", "excludeTools"] as const) {
+		if (value[field] !== undefined && !isStringArray(value[field])) return false;
+	}
+	for (const field of ["env", "headers"] as const) {
+		if (value[field] !== undefined && !isStringRecord(value[field])) return false;
+	}
+	for (const field of ["exposeResources", "literalEnv"] as const) {
+		if (value[field] !== undefined && typeof value[field] !== "boolean") return false;
+	}
+	if (value.requestHeadersCommand !== undefined && !isRequestHeadersCommand(value.requestHeadersCommand)) return false;
+	if (value.auth !== undefined && value.auth !== "oauth" && value.auth !== "bearer" && value.auth !== false) return false;
+	return value.directTools === undefined || typeof value.directTools === "boolean" || isStringArray(value.directTools);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+	return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
+}
+
+function isRequestHeadersCommand(value: unknown): value is NonNullable<McpServerDefinition["requestHeadersCommand"]> {
+	if (!isRecord(value) || typeof value.command !== "string") return false;
+	if (value.args !== undefined && !isStringArray(value.args)) return false;
+	if (value.env !== undefined && !isStringRecord(value.env)) return false;
+	return value.timeoutMs === undefined || (typeof value.timeoutMs === "number" && Number.isFinite(value.timeoutMs));
+}
+
 export function loadPackageMcpServers(cwd: string): Record<string, McpServerDefinition> {
 	const servers: Record<string, McpServerDefinition> = {};
 	const seen = new Set<string>();
@@ -64,11 +102,11 @@ export function loadPackageMcpServers(cwd: string): Record<string, McpServerDefi
 			const rawServers = (config as { mcpServers?: unknown }).mcpServers;
 			if (!rawServers || typeof rawServers !== "object" || Array.isArray(rawServers)) continue;
 			for (const [serverName, definition] of Object.entries(rawServers)) {
-				if (!definition || typeof definition !== "object" || Array.isArray(definition)) continue;
+				if (!isMcpServerDefinition(definition)) continue;
 				const normalizedName = `${packagePrefix}__${formatName(serverName, "server")}`;
 				if (seen.has(normalizedName)) continue;
 				seen.add(normalizedName);
-				servers[normalizedName] = definition as McpServerDefinition;
+				servers[normalizedName] = definition;
 			}
 		}
 	}
@@ -90,7 +128,7 @@ export function loadAgentPluginMcpServers(paths: unknown, cwd: string): Record<s
 		const rawServers = (config as { mcpServers: Record<string, unknown> }).mcpServers;
 
 		for (const [serverName, rawDefinition] of Object.entries(rawServers)) {
-			const definition = translatePluginServer(manifest.name, pluginRoot, serverName, rawDefinition);
+			const definition = translatePluginServer(manifest.name, pluginRoot, rawDefinition);
 			if (!definition) continue;
 			const normalizedName = `${formatName(manifest.name, "plugin")}__${formatName(serverName, "server")}`;
 			if (Object.hasOwn(servers, normalizedName)) continue;
@@ -254,12 +292,11 @@ function isValidPluginConfig(value: unknown): value is { mcpServers: Record<stri
 function translatePluginServer(
 	pluginName: string,
 	pluginRoot: string,
-	serverName: string,
 	value: unknown,
 ): McpServerDefinition | undefined {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const raw = value as Record<string, unknown>;
-	if (raw.type === "stdio") return translatePluginStdioServer(pluginName, pluginRoot, serverName, raw);
+	if (raw.type === "stdio") return translatePluginStdioServer(pluginName, pluginRoot, raw);
 	if (raw.type === "streamable-http" || raw.type === "sse") return translatePluginHttpServer(raw);
 	return undefined;
 }
@@ -267,7 +304,6 @@ function translatePluginServer(
 function translatePluginStdioServer(
 	pluginName: string,
 	pluginRoot: string,
-	serverName: string,
 	raw: Record<string, unknown>,
 ): McpServerDefinition | undefined {
 	if ([...Object.keys(raw)].some((key) => !PLUGIN_STDIO_FIELDS.has(key))) return undefined;
