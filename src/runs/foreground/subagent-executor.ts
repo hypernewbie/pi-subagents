@@ -5663,6 +5663,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const workflow = await runWorkflowScript({
 							script: workflowScript,
 							workflowRunId,
+							processCwd: ctx.cwd,
 							globalConcurrencyLimit: requestParams.globalConcurrencyLimit ?? deps.config.globalConcurrencyLimit,
 							timeoutMs: timeout,
 							signal: controller.signal,
@@ -5961,6 +5962,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const workflow = await runWorkflowScript({
 					script: requestParams.workflowScript,
 					workflowRunId: foregroundWorkflowRunId,
+					processCwd: ctx.cwd,
 					...(delegatedWorkflowPermit ? { oneUsePermit: { claim: (key: string) => claimWorkflowChildPermit(delegatedWorkflowPermit, foregroundWorkflowRunId, key) } } : {}),
 					globalConcurrencyLimit: requestParams.globalConcurrencyLimit ?? deps.config.globalConcurrencyLimit,
 					timeoutMs: timeout,
