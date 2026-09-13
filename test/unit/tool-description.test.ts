@@ -15,7 +15,7 @@ import {
 	SUBAGENT_TOOL_PROMPT_GUIDELINES,
 	SUBAGENT_TOOL_PROMPT_SNIPPET,
 } from "../../src/extension/tool-description.ts";
-import { SUBAGENT_CHILD_ENV, SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
+import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/child-runtime-config.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -26,97 +26,72 @@ function escapeRegex(value: string): string {
 function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	delete env[SUBAGENT_CHILD_ENV];
-	delete env[SUBAGENT_FANOUT_CHILD_ENV];
 	if (agentDir) env.PI_CODING_AGENT_DIR = agentDir;
 	return env;
 }
 
 describe("registered subagent tool description", () => {
-	it("uses split metadata by default", () => {
-		const description = buildSubagentToolDescription();
+	it("uses concise split metadata only by default", () => {
+		assert.equal(buildSubagentToolDescription(), DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
 		const metadata = buildSubagentToolPromptMetadata();
-		assert.equal(description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(Buffer.byteLength(description), 1264);
-		assert.match(description, /workflowScriptPath.*request cwd/i);
-		assert.match(description, /script inputs are mutually exclusive/i);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
-		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 1897);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
-		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript for multi-step or parallel work/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript means exactly one top-level subagent tool call with async:true/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /Inside it, use runs\.run\/runs\.all to launch children/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /do not make another top-level subagent call for those children/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /await runs\.all.*do not read \.output from unawaited runs\.run launches/i);
-		assert.match(description, /External CLI agents.*model override.*native Pi tools/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /External CLI agents.*model override.*native Pi tools/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /suffix wins over the agent's thinking default/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /watchdog\.configure' and is ignored on dispatch/i);
+		assert.ok(Buffer.byteLength(metadata.promptGuidelines!.join("\n")) < 400);
+		for (const guideline of metadata.promptGuidelines!) assert.match(guideline, /subagent/);
+		for (const toolDescriptionMode of ["full", "compact", "custom"] as const) {
+			assert.deepEqual(buildSubagentToolPromptMetadata({ toolDescriptionMode }), {});
+		}
 	});
 
-	it("keeps the full description when configured", () => {
-		const description = buildSubagentToolDescription({ toolDescriptionMode: "full" });
-		assert.equal(buildSubagentToolPromptMetadata({ toolDescriptionMode: "full" }).promptSnippet, undefined);
-		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for inline orchestration or \{ workflowScriptPath \}/i);
-		assert.match(description, /workflowScriptPath:"workflows\/review\.js".*host reads the file.*sandbox/i);
-		assert.match(description, /SINGLE CHILD:.*starts exactly one direct child/i);
-		assert.match(description, /Do not combine agent\/task with action, workflowScript, or workflowScriptPath/i);
-		assert.match(description, /runs\.run for one child and await runs\.all.*ordinary parallel children/i);
-		assert.match(description, /do not read \.output from unawaited runs\.run launches/i);
-		assert.match(description, /runs\.steer\(key, message, \{mode\?, index\?, ackTimeoutMs\?\}\).*prior keyed child.*without exposing its run id/i);
-		assert.match(description, /receipts are queued, delivered, missed, or failed/i);
-		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);
-		assert.match(description, /ordinary JavaScript statement body.*explicit return/i);
-		assert.match(description, /Sequential example/i);
-		assert.match(description, /Parallel example/i);
-		assert.match(description, /defaultSubagentContext wins over agent defaultContext/i);
-		assert.doesNotMatch(description, /Compatibility tasks\[\]|CHAIN EXAMPLES|PARALLEL \(compatibility\)/i);
-		assert.doesNotMatch(description, /append-step|approve-checkpoint|reject-checkpoint/);
-		assert.match(description, /cannot access filesystem, shell, arbitrary Pi tools, or host globals/i);
-		assert.match(description, /exactly one non-empty title or summary/i);
-		assert.match(description, /goal may only be true and requires budget:\{tokens\}/i);
-		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
-		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);
-		assert.match(description, /children\.list.*resumable\/not-resumable reasons/i);
-		assert.match(description, /Resume only rows reported resumable/i);
-		assert.match(description, /implementation challenge.*\{action:\"resume\", id:\"run-id\", message:\"\.\.\.\"\}/i);
-		assert.match(description, /Resume keeps the stored agent\/model\/tool contract/i);
-		assert.match(description, /Oracle\/advisor consultations should use supervisor dialogue for material unknowns when available/i);
-		assert.match(description, /same-role fallback challenge and label it as fallback/i);
-		assert.match(description, /status\.json/);
-		assert.match(description, /suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
-		assert.match(description, /suffix wins over the agent's thinking default/i);
-		assert.match(description, /watchdog\.configure' and is ignored on dispatch/i);
+	it("keeps execution, authority, evidence and recovery contracts in every built-in mode", () => {
+		for (const description of [DEFAULT_SUBAGENT_TOOL_DESCRIPTION, FULL_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION]) {
+			for (const contract of [
+				/one child with \{agent,task\?\}/,
+				/exactly one of workflowScript, workflowScriptPath or \{workflow,args\}/,
+				/agent\/task exclude workflow inputs; task excludes action.*agent may target management actions/,
+				/workflowScriptPath loads from request cwd before sandbox/,
+				/action is management\/control; validate accepts either script without launching/,
+				/action:"list",capabilities:true.*executable, non-disabled.*runner.available === true/,
+				/Passive PATH\/PATHEXT\/X_OK.*not authentication\/version\/launch proof/,
+				/exactly one top-level subagent workflow call with async:true/,
+				/explicit return, top-level await.*nested async function\/arrow\/method helpers are rejected/,
+				/Await runs.run.*before .output.*ordered array, not a key map/,
+				/every stored run promise with direct await, Promise.race or Promise.all/,
+				/Await\/return runs.steer\(key,message,options\?\) for a prior key, never raw run ids/,
+				/Consume results at dependency barriers/,
+				/Native async completion wakes this session.*return control.*bg_wait merely for a wake/,
+				/not for final reviews\/gates/,
+				/one writer per cwd\/worktree.*fresh-context read-only reviewers/i,
+				/output on runs.run\/runs.all, not task filename prose.*outputReference.*outputPathMapping.*artifactPaths/,
+				/children.list.*resume only resumable rows.*stored agent\/model\/tool contract.*If none is resumable.*same-role fallback challenge/,
+				/latest returned runId.*distinct resume pass needs a new stable key.*identical launch parameters/,
+				/Oracle\/advisor.*supervisor dialogue/,
+				/raw workflowScript\/workflowScriptPath cannot use runs.host/,
+				/Granted commands\/relative outputs use workflow cwd, never per-step cwd/,
+				/worktree:true requires clean source.*baseRef defaults to HEAD at allocation.*named ref, never full 40\/64-character commit IDs or revision expressions/,
+				/External CLI agents support native options only when their runner declares them.*tool budget, fast, fork context/,
+				/child launch, prompt runtime, extension load or child tooling failure is a lane infrastructure blocker/,
+				/exact failure.*run\/status.*repo\/cwd\/worktree\/branch\/ref.*clean worktree.*partial diff.*same-protocol retry/,
+				/interactive_shell, pi -ne, Codex\/Claude\/Cursor CLI.*explicit owner approval/,
+				/fallback requires explicit owner approval, not Pi core's generic pi -ne hint/,
+				/Ordinary child subagents are not orchestrators.*depth\/session limits/,
+				/Before advanced orchestration.*action:"guide",topic:"workflows".*pi-subagents skill/,
+				/action:"guide",topic:"tool-reference".*controls\/evidence gates/,
+			]) assert.match(description, contract);
+		}
 	});
 
-	it("offers a compact mode that keeps the two-tier contract and safety guidance", () => {
-		const description = buildSubagentToolDescription({ toolDescriptionMode: "compact" });
-		assert.equal(description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for inline orchestration or \{ workflowScriptPath \}/i);
-		assert.match(description, /workflowScriptPath:"workflows\/review\.js".*request cwd.*sandbox/i);
-		assert.match(description, /SINGLE .*starts exactly one direct child/i);
-		assert.match(description, /runs\.run for one child and await runs\.all.*ordinary parallel work/i);
-		assert.match(description, /do not read \.output from unawaited runs\.run launches/i);
-		assert.match(description, /runs\.steer\(key,message,options\?\).*prior keyed child/i);
-		assert.match(description, /never accepts a raw run id/i);
-		assert.match(description, /repository mutation lanes.*worktree:true.*runs\.run\/runs\.all.*managed isolation/i);
-		assert.doesNotMatch(description, /tasks\[\]|chain\[\]/i);
-		assert.match(description, /subagent_wait/i);
-		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);
-		assert.match(description, /children\.list.*resume only rows reported resumable/i);
-		assert.match(description, /\{action:\"resume\",id:\"run-id\",message:\"\.\.\.\"\} for a simple follow-up or challenge/i);
-		assert.match(description, /resume keeps the stored agent\/model\/tool contract/i);
-		assert.match(description, /Oracle\/advisor consultations use available supervisor dialogue/i);
-		assert.match(description, /same-role fallback challenge and label it as fallback/i);
-		assert.match(description, /exactly one non-empty title or summary/i);
-		assert.match(description, /goal may only be true and requires budget:\{tokens\}/i);
-		assert.match(description, /Per-run thinking is a suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
-		assert.match(description, /suffix wins over the agent's thinking default/i);
-		assert.match(description, /watchdog\.configure' and is ignored on dispatch/i);
-		assert.ok(description.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length);
+	it("keeps full mode supplemental details and moves recipes to shipped guides", () => {
+		assert.equal(buildSubagentToolDescription({ toolDescriptionMode: "full" }), FULL_SUBAGENT_TOOL_DESCRIPTION);
+		assert.equal(buildSubagentToolDescription({ toolDescriptionMode: "compact" }), COMPACT_SUBAGENT_TOOL_DESCRIPTION);
+		assert.ok(COMPACT_SUBAGENT_TOOL_DESCRIPTION.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length);
+		assert.match(FULL_SUBAGENT_TOOL_DESCRIPTION, /runs.lanes.*structuredOutput.verdict === 'blocked'.*never reviewer prose/);
+		assert.match(FULL_SUBAGENT_TOOL_DESCRIPTION, /mission:false.*state.get.*state.set/);
+		const workflows = fs.readFileSync(path.join(projectRoot, "docs/workflows.md"), "utf8");
+		const reference = fs.readFileSync(path.join(projectRoot, "docs/tool-reference.md"), "utf8");
+		for (const heading of ["Parallel sequential lanes", "Host command steps", "Advanced rolling child runs", "Worktree isolation"]) assert.ok(workflows.includes(heading));
+		for (const heading of ["Acceptance gates", "Retained children", "Management actions", "Workflow steering"]) assert.ok(reference.includes(heading));
+		assert.match(reference, /JSON-encoded object strings/);
 	});
 
 	it("renders a custom project description with placeholders and mandatory safety guidance", () => {
@@ -159,6 +134,18 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 		assert.match(description, /ordinary child subagents are not orchestrators/i);
 		assert.match(description, /status\.json/);
+	});
+
+	it("deduplicates compact placeholder safety guidance in custom descriptions", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-compact-custom-"));
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-agent-"));
+		fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+		fs.writeFileSync(path.join(cwd, ".pi", "subagent-tool-description.md"), "{{compactDescription}}", "utf-8");
+
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "custom" }, { cwd, agentDir });
+
+		assert.equal(description.split("lane infrastructure blocker").length - 1, 1);
+		assert.ok(description.endsWith(SUBAGENT_SAFETY_GUIDANCE));
 	});
 
 	it("keeps mandatory safety guidance last when custom prose embeds it before an override", () => {
@@ -274,6 +261,8 @@ describe("registered subagent tool description", () => {
 		writeExtensionConfig(defaultAgentDir, {});
 		const defaultTool = readRegisteredTool(defaultAgentDir);
 		assert.equal(defaultTool.description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
+		assert.equal(defaultTool.properties.includes("step"), false);
+		assert.doesNotMatch(defaultTool.description, /append-step|approve-checkpoint|reject-checkpoint/);
 		assert.equal(defaultTool.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.deepEqual(defaultTool.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
 
@@ -305,12 +294,5 @@ describe("registered subagent tool description", () => {
 		const invalidAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-invalid-"));
 		writeExtensionConfig(invalidAgentDir, { toolDescriptionMode: "tiny" });
 		assert.equal(readRegisteredTool(invalidAgentDir).description, FULL_SUBAGENT_TOOL_DESCRIPTION);
-	});
-
-	it("registers the trimmed schema and description by default", () => {
-		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-trimmed-"));
-		const tool = readRegisteredTool(agentDir);
-		assert.equal(tool.properties.includes("step"), false);
-		assert.doesNotMatch(tool.description, /append-step|approve-checkpoint|reject-checkpoint/);
 	});
 });
