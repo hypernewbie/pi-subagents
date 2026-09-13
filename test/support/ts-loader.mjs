@@ -133,7 +133,12 @@ export function completeSimple() { return Promise.resolve({}); }
 `;
 
 export function resolve(specifier, context, nextResolve) {
-  if (specifier === "@earendil-works/pi-tui") {
+  // Only substitute pi-tui with the lightweight stub when imported from
+  // tui/render.ts. Other call sites (extension/index.ts, tui/fleet.ts, etc.)
+  // use the real @earendil-works/pi-tui package so the renderer components
+  // (Box, Container, ...) get real padding / behaviour instead of the
+  // flatMap stand-in below.
+  if (specifier === "@earendil-works/pi-tui" && context.parentURL?.endsWith("/render.ts")) {
     return { url: asDataModule(renderPiTuiShim), shortCircuit: true };
   }
 
