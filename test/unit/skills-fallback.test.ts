@@ -535,10 +535,12 @@ Fallback global agent.
 		const userPackageRoot = path.join(userAgentDir, "user-pkg");
 		const previousHome = process.env.HOME;
 		const previousUserProfile = process.env.USERPROFILE;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 		try {
 			process.env.HOME = fakeHome;
 			process.env.USERPROFILE = fakeHome;
+			process.env.PI_CODING_AGENT_DIR = userAgentDir;
 			makePackageSkill(userPackageRoot, "user-settings-package-skill", "User settings package skill.");
 			fs.mkdirSync(userAgentDir, { recursive: true });
 			fs.writeFileSync(
@@ -558,6 +560,8 @@ Fallback global agent.
 			else process.env.HOME = previousHome;
 			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
 			else process.env.USERPROFILE = previousUserProfile;
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		}
 	});
 
@@ -567,10 +571,12 @@ Fallback global agent.
 		const packageRoot = path.join(userAgentDir, "git", "github.com", "user", "repo");
 		const previousHome = process.env.HOME;
 		const previousUserProfile = process.env.USERPROFILE;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 		try {
 			process.env.HOME = fakeHome;
 			process.env.USERPROFILE = fakeHome;
+			process.env.PI_CODING_AGENT_DIR = userAgentDir;
 			makePackageSkill(packageRoot, "user-settings-git-package-skill", "User settings git package skill.");
 			fs.mkdirSync(userAgentDir, { recursive: true });
 			fs.writeFileSync(
@@ -590,6 +596,8 @@ Fallback global agent.
 			else process.env.HOME = previousHome;
 			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
 			else process.env.USERPROFILE = previousUserProfile;
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		}
 	});
 
@@ -599,10 +607,12 @@ Fallback global agent.
 		const packageRoot = path.join(userAgentDir, "npm", "node_modules", "@scope", "skill-package");
 		const previousHome = process.env.HOME;
 		const previousUserProfile = process.env.USERPROFILE;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 		try {
 			process.env.HOME = fakeHome;
 			process.env.USERPROFILE = fakeHome;
+			process.env.PI_CODING_AGENT_DIR = userAgentDir;
 			makePackageSkill(
 				packageRoot,
 				"user-settings-scoped-npm-package-skill",
@@ -627,6 +637,8 @@ Fallback global agent.
 			else process.env.HOME = previousHome;
 			if (previousUserProfile === undefined) delete process.env.USERPROFILE;
 			else process.env.USERPROFILE = previousUserProfile;
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		}
 	});
 
