@@ -74,6 +74,19 @@ function readRunnerStartupDiagnostics(asyncDir: string): string | undefined {
 	return lines.length > 4000 ? `${lines.slice(-4000)}\n[stderr tail truncated]` : lines;
 }
 
+/**
+ * When the runner died because a module did not resolve, name the missing
+ * specifier and the remediation. The usual cause is a materialized package
+ * checkout (or its install) that predates the code the runner boots: the
+ * runner loads `src/runs/background/subagent-runner.ts` through jiti, so
+ * every runtime import in that transitive closure must resolve there.
+ */
+function describeUnresolvedRunnerModule(diagnostics: string): string {
+	const match = /Cannot find module '([^']+)'/.exec(diagnostics);
+	if (!match?.[1]) return "";
+	return `\n\nThe runner could not resolve '${match[1]}'. Update the materialized package checkout to the expected commit and reinstall dependencies there (including peer UI packages), then retry the run.`;
+}
+
 function isNotFoundError(error: unknown): boolean {
 	return typeof error === "object"
 		&& error !== null
@@ -221,7 +234,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 	const pid = typeof status.pid === "number" ? status.pid : "unknown";
 	const baseMessage = reason ?? `Async runner process ${pid} exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.`;
 	const diagnostics = readRunnerStartupDiagnostics(asyncDir);
-	const message = diagnostics ? `${baseMessage}\n\nRunner stderr tail:\n${diagnostics}` : baseMessage;
+	const message = diagnostics ? `${baseMessage}\n\nRunner stderr tail:\n${diagnostics}${describeUnresolvedRunnerModule(diagnostics)}` : baseMessage;
 	const steps = status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" as const }];
 	const repairedSteps = steps.map((step) => step.status === "running" || step.status === "pending"
 		? {
