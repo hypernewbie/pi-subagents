@@ -65,6 +65,10 @@ export class Container {
     this.children.push(child);
   }
 
+  clear() {
+    this.children.length = 0;
+  }
+
   render(width) {
     return this.children.flatMap((child) => child.render(width));
   }

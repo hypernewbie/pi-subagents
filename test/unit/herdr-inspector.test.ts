@@ -12,6 +12,7 @@ import { createProjectPaneManager, handleHerdrProjectPaneAction, listHerdrProjec
 import { decodeSessionRoots } from "../../src/inspectors/herdr/session-roots-codec.ts";
 import { consumeSteerRequests, consumeStopRequest } from "../../src/runs/background/control-channel.ts";
 import { PI_SUBAGENT_PI_BINARY_ENV } from "../../src/runs/shared/pi-spawn.ts";
+import { getProjectSubagentsDir } from "../../src/shared/artifacts.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";
 
 // `pane run` commands quote the whole --session-roots value (base64, so it has
@@ -358,7 +359,7 @@ describe("Herdr inspector", () => {
 			const focusedSplitCall = calls.find((args) => args[0] === "pane" && args[1] === "split");
 			assert.deepEqual(focusedSplitCall, ["pane", "split", "--current", "--direction", "right", "--cwd", projectRoot, "--focus"]);
 			assert.equal(readHerdrProjectPaneBinding(root)?.lastFocusedAt, "2026-01-01T00:00:00.000Z");
-			fs.writeFileSync(path.join(ownerRoot, ".pi/subagents/project-panes/herdr-roots.json"), JSON.stringify({ schemaVersion: 1, kind: "herdr-project-pane-roots", projectRoots: [123] }));
+			fs.writeFileSync(path.join(getProjectSubagentsDir(ownerRoot), "project-panes", "herdr-roots.json"), JSON.stringify({ schemaVersion: 1, kind: "herdr-project-pane-roots", projectRoots: [123] }));
 			assert.throws(() => listHerdrProjectPaneRoots(ownerRoot), /Invalid Herdr project pane root index/);
 		} finally {
 			if (previousPiBinary === undefined) delete process.env[PI_SUBAGENT_PI_BINARY_ENV];
@@ -430,7 +431,7 @@ describe("Herdr inspector", () => {
 			assert.equal(status.isError, undefined, text(status));
 			assert.match(text(status), /w1:p32 is open/);
 			const legacyBinding = readHerdrProjectPaneBinding(root)!;
-			fs.writeFileSync(path.join(root, ".pi/subagents", "project-panes", "herdr.json"), JSON.stringify({ ...legacyBinding, startupMessage: 42 }));
+			fs.writeFileSync(path.join(getProjectSubagentsDir(root), "project-panes", "herdr.json"), JSON.stringify({ ...legacyBinding, startupMessage: 42 }));
 			const closed = await handleHerdrProjectPaneAction("project.close", { cwd: root }, { cwd: root, client });
 			assert.equal(closed.isError, true);
 			assert.match(text(closed), /INVALID_PANE_RESPONSE/);
