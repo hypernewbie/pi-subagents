@@ -37,6 +37,7 @@ describe("profiles helpers", () => {
 		homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subprofiles-home-"));
 		process.env.HOME = homeDir;
 		process.env.USERPROFILE = homeDir;
+		process.env[PI_SUBAGENT_PI_BINARY_ENV] = path.join(homeDir, "pi-test-bin");
 	});
 
 	afterEach(() => {
@@ -94,6 +95,27 @@ describe("profiles helpers", () => {
 				fallbackModels: ["openai-codex/gpt-5.4-mini"],
 			},
 			reviewer: { thinking: false, fallbackModels: false },
+		});
+	});
+
+	it("keeps machine placement when a model profile replaces the override map", () => {
+		const profilesDir = getSubagentProfilesDir();
+		fs.mkdirSync(profilesDir, { recursive: true });
+		fs.writeFileSync(path.join(profilesDir, "quota.json"), JSON.stringify({
+			subagents: { agentOverrides: { scout: { model: "openai-codex/gpt-5.3-codex-spark" }, "claude-code": { thinking: false } } },
+		}, null, 2));
+		const settingsPath = path.join(homeDir, ".pi", "agent", "settings.json");
+		fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+		fs.writeFileSync(settingsPath, JSON.stringify({
+			subagents: { agentOverrides: { "claude-code": { machine: "workmac", model: "old" }, "codex-exec": { machine: "workmac" }, stale: { model: "remove-me" } } },
+		}, null, 2));
+
+		applySubagentProfile("quota");
+		const written = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+		assert.deepEqual(written.subagents.agentOverrides, {
+			scout: { model: "openai-codex/gpt-5.3-codex-spark" },
+			"claude-code": { thinking: false, machine: "workmac" },
+			"codex-exec": { machine: "workmac" },
 		});
 	});
 
