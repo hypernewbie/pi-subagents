@@ -3,8 +3,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { appendJsonl } from "../../shared/artifacts.ts";
-import type { AsyncParallelGroupStatus, AsyncStatus, WorkflowGraphNode, WorkflowGraphSnapshot } from "../../shared/types.ts";
+import type { AsyncStatus, WorkflowGraphNode, WorkflowGraphSnapshot } from "../../shared/types.ts";
 import { PROMPT_REDACTED, readStatus } from "../../shared/utils.ts";
+import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import type { DynamicRunnerGroup, ParallelStepGroup, RunnerStep, RunnerSubagentStep } from "../shared/parallel-utils.ts";
 import { isDynamicRunnerGroup, isParallelGroup } from "../shared/parallel-utils.ts";
 
@@ -160,8 +161,10 @@ export function statusStepDescription(task: string | undefined): string | undefi
 
 function statusStepForTask(task: RunnerSubagentStep): StatusStep {
 	const description = statusStepDescription(task.task);
+	const sessionName = task.sessionName ?? deriveChildSessionName({ agent: task.agent, task: task.task, label: task.label });
 	return {
 		agent: task.agent,
+		...(sessionName ? { sessionName } : {}),
 		...(description ? { description } : {}),
 		...(task.context ? { context: task.context } : {}),
 		phase: task.phase,
@@ -180,7 +183,7 @@ function statusStepForTask(task: RunnerSubagentStep): StatusStep {
 	};
 }
 
-function statusStepsForRunnerStep(step: RunnerStep, stepIndex: number): StatusStep[] {
+function statusStepsForRunnerStep(step: RunnerStep): StatusStep[] {
 	if (isParallelGroup(step)) return step.parallel.map(statusStepForTask);
 	if (isDynamicRunnerGroup(step)) {
 		return [{
@@ -297,7 +300,7 @@ export function appendRunnerStepsToStatus(input: {
 	for (const step of input.steps) {
 		const stepIndex = input.status.chainStepCount ?? input.status.steps?.length ?? 0;
 		const flatIndex = input.status.steps?.length ?? 0;
-		const statusSteps = statusStepsForRunnerStep(step, stepIndex);
+		const statusSteps = statusStepsForRunnerStep(step);
 		input.status.steps ??= [];
 		input.status.steps.push(...statusSteps);
 		if (isParallelGroup(step)) {

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { safeTerminalText } from "../../shared/display-text.ts";
+import { safeTerminalText, truncateDisplayText } from "../../shared/display-text.ts";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
 import {
@@ -23,6 +23,10 @@ import { isTrustedRecordedSessionFile } from "../../shared/session-file-trust.ts
 const DEFAULT_TRANSCRIPT_LINES = 80;
 const MAX_TRANSCRIPT_LINES = 500;
 const TRANSCRIPT_TAIL_BYTES = 256 * 1024;
+const MAX_TRANSCRIPT_LINE_CHARS = 2000;
+const MAX_TRANSCRIPT_BODY_BYTES = 32 * 1024;
+const TRANSCRIPT_LINE_OMISSION = "… [content omitted]";
+const TRANSCRIPT_BODY_OMISSION = "  … [earlier lines omitted]";
 
 type ForegroundControl = SubagentState["foregroundControls"] extends Map<string, infer T> ? T : never;
 type ForegroundRun = NonNullable<SubagentState["foregroundRuns"]> extends Map<string, infer T> ? T : never;
@@ -70,6 +74,14 @@ function uniqueStrings(values: Array<string | undefined>): string[] {
 		result.push(value);
 	}
 	return result;
+}
+
+function fleetChildDisplayName(child: { agent?: string; sessionName?: string }, fallback = "subagent"): string {
+	return child.sessionName?.trim() || child.agent || fallback;
+}
+
+function fleetStepDisplayName(step: Pick<AsyncJobStep, "agent" | "sessionName" | "label">): string {
+	return step.sessionName?.trim() || (step.label ? `${step.label} (${step.agent})` : step.agent);
 }
 
 function resolveMaybeRelative(asyncDir: string, filePath: string | undefined): string | undefined {
@@ -283,7 +295,8 @@ function formatActivityFacts(input: {
 }
 
 function foregroundModeName(control: ForegroundControl): string {
-	if (control.mode === "single" && control.currentAgent) return control.currentAgent;
+	const currentDisplayName = control.sessionName?.trim() || control.currentAgent;
+	if (control.mode === "single" && currentDisplayName) return currentDisplayName;
 	return control.mode;
 }
 
@@ -302,7 +315,8 @@ function formatForegroundFleetLines(controls: ForegroundControl[]): string[] {
 			toolCount: control.toolCount,
 			...(control.tokens !== undefined ? { tokens: { total: control.tokens } } : {}),
 		});
-		const current = control.currentAgent ? ` | ${control.currentAgent}${control.currentIndex !== undefined ? ` #${control.currentIndex}` : ""}` : "";
+		const currentDisplayName = control.sessionName?.trim() || control.currentAgent;
+		const current = currentDisplayName ? ` | ${currentDisplayName}${control.currentIndex !== undefined ? ` #${control.currentIndex}` : ""}` : "";
 		lines.push(`- ${control.runId} | running | ${foregroundModeName(control)}${current}${activity ? ` | ${activity}` : ""}`);
 		lines.push(`  status: subagent({ action: "status", id: "${control.runId}" })`);
 		lines.push("  transcript: live in the expanded foreground result; persisted session transcript appears after completion when sessions are enabled.");
@@ -317,10 +331,10 @@ function formatDetachedForegroundFleetLines(runs: ForegroundRun[]): string[] {
 	const ordered = [...runs].sort((left, right) => right.updatedAt - left.updatedAt);
 	for (const run of ordered) {
 		const detachedChildren = run.children.filter((child) => child.status === "detached");
-		const childSummary = detachedChildren.map((child) => `${child.agent} #${child.index}`).join(", ");
+		const childSummary = detachedChildren.map((child) => `${fleetChildDisplayName(child)} #${child.index}`).join(", ");
 		lines.push(`- ${run.runId} | detached | ${run.mode}${childSummary ? ` | ${childSummary}` : ""}`);
 		lines.push(`  status: subagent({ action: "status", id: "${run.runId}" })`);
-		lines.push(`  recovery: reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`);
+		lines.push(`  recovery: reply to the supervisor request first, then wait with bg_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`);
 	}
 	return lines;
 }
@@ -338,7 +352,7 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
 		lines.push(`  status: subagent({ action: "status", id: "${run.id}" })`);
 		lines.push(`  transcript: subagent({ action: "status", id: "${run.id}", view: "transcript" })`);
 		for (const step of run.steps) {
-			const display = step.label ? `${step.label} (${step.agent})` : step.agent;
+			const display = fleetStepDisplayName(step);
 			const stepContext = contextModeLabel(step.context);
 			const phase = step.phase ? `[${step.phase}] ` : "";
 			const stepActivity = formatActivityFacts(step);
@@ -435,7 +449,7 @@ function selectTranscriptStep(status: AsyncStatus, options: TranscriptOptions): 
 	}
 	const step = selectedIndex !== undefined ? steps[selectedIndex] : undefined;
 	const hint = options.index === undefined && steps.length > 1
-		? `Tip: pass index to inspect a specific child transcript (${steps.map((candidate, index) => `${index}=${candidate.agent}`).join(", ")}).`
+		? `Tip: pass index to inspect a specific child transcript (${steps.map((candidate, index) => `${index}=${fleetChildDisplayName(candidate)}`).join(", ")}).`
 		: undefined;
 	return { index: selectedIndex, step, hint };
 }
@@ -445,7 +459,7 @@ function stepStateLine(mode: SubagentRunMode, index: number | undefined, step: A
 	const modelThinking = formatModelThinking(step.model, step.thinking);
 	const context = contextModeLabel(step.context);
 	const parts = [
-		`${mode === "parallel" ? "Agent" : "Step"}: ${index} (${step.agent})${context ? ` ${context}` : ""}`,
+		`${mode === "parallel" ? "Agent" : "Step"}: ${index} (${fleetChildDisplayName(step)})${context ? ` ${context}` : ""}`,
 		step.status,
 		formatActivityFacts(step),
 		modelThinking,
@@ -484,7 +498,31 @@ function appendTranscriptBody(lines: string[], sourceLabel: string, sourceLines:
 		lines.push("  (no transcript lines available yet)");
 		return;
 	}
-	for (const line of sourceLines) lines.push(`  ${line}`);
+	// Bound the rendered body, not the raw input: terminal escaping can expand it.
+	// Keep line prefixes (roles/tool names), then prefer whole recent lines. The
+	// byte budget includes indentation, separators and omission markers, but not
+	// the source label, run metadata, warnings or artifact paths above the body.
+	const body: string[] = [];
+	let bytes = 0;
+	for (let index = sourceLines.length - 1; index >= 0; index--) {
+		// Preserve assembled-line binary detection (including indentation). A
+		// binary placeholder replaces the whole line and must not be reindented.
+		const safe = safeTerminalText(`  ${sourceLines[index]!}`);
+		const lineLimit = MAX_TRANSCRIPT_LINE_CHARS + 2;
+		const line = safe.length <= lineLimit
+			? safe
+			: truncateDisplayText(safe, lineLimit - TRANSCRIPT_LINE_OMISSION.length) + TRANSCRIPT_LINE_OMISSION;
+		const size = Buffer.byteLength(line) + 1;
+		if (bytes + size > MAX_TRANSCRIPT_BODY_BYTES) {
+			const markerBytes = Buffer.byteLength(TRANSCRIPT_BODY_OMISSION) + 1;
+			while (bytes + markerBytes > MAX_TRANSCRIPT_BODY_BYTES) bytes -= Buffer.byteLength(body.pop()!) + 1;
+			body.push(TRANSCRIPT_BODY_OMISSION);
+			break;
+		}
+		body.push(line);
+		bytes += size;
+	}
+	lines.push(...body.reverse());
 }
 
 export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, options: TranscriptOptions = {}): string {
@@ -553,7 +591,7 @@ export function formatNestedRunTranscript(run: NestedRunSummary, options: Transc
 		`Nested run: ${run.id}`,
 		`State: ${run.state}`,
 		run.mode ? `Mode: ${run.mode}` : undefined,
-		run.agent ? `Agent: ${run.agent}` : run.agents?.length ? `Agents: ${run.agents.join(", ")}` : undefined,
+		run.sessionName?.trim() ? `Agent: ${run.sessionName.trim()}` : run.agent ? `Agent: ${run.agent}` : run.agents?.length ? `Agents: ${run.agents.join(", ")}` : undefined,
 	].filter((line): line is string => Boolean(line));
 	appendKnownArtifacts(lines, { outputPaths: [], sessionFile: run.sessionFile });
 	if (!run.sessionFile) {
@@ -579,14 +617,14 @@ export function formatAsyncResultTranscript(data: {
 	sessionFile?: string;
 	agent?: string;
 	exitCode?: number | null;
-	results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null }>;
+	results?: Array<{ agent?: string; sessionName?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null }>;
 }, resultPath: string, options: TranscriptOptions = {}): string {
 	const lineLimit = transcriptLineLimit(options.lines);
 	const runId = data.runId ?? data.id ?? path.basename(resultPath, ".json");
 	const children = Array.isArray(data.results)
 		? data.results
 		: data.agent
-			? [{ agent: data.agent, output: data.output, summary: data.summary, sessionFile: data.sessionFile, state: data.state, success: data.success, exitCode: data.exitCode }]
+			? [{ agent: data.agent, sessionName: undefined, output: data.output, summary: data.summary, sessionFile: data.sessionFile, state: data.state, success: data.success, exitCode: data.exitCode }]
 			: [];
 	let index = options.index;
 	if (index !== undefined && !Number.isInteger(index)) throw new Error("Transcript index must be an integer.");
@@ -601,8 +639,8 @@ export function formatAsyncResultTranscript(data: {
 	const lines = [
 		`Run: ${runId}`,
 		`State: ${data.state ?? (data.success ? "complete" : "failed")}`,
-		index !== undefined && child ? `Child: ${index} (${child.agent ?? "subagent"})` : undefined,
-		index === undefined && children.length > 1 ? `Tip: pass index to inspect a specific child transcript (${children.map((candidate, childIndex) => `${childIndex}=${candidate.agent ?? "subagent"}`).join(", ")}).` : undefined,
+		index !== undefined && child ? `Child: ${index} (${fleetChildDisplayName(child)})` : undefined,
+		index === undefined && children.length > 1 ? `Tip: pass index to inspect a specific child transcript (${children.map((candidate, childIndex) => `${childIndex}=${fleetChildDisplayName(candidate)}`).join(", ")}).` : undefined,
 	].filter((line): line is string => Boolean(line));
 	appendKnownArtifacts(lines, { outputPaths: [], sessionFile, resultPath });
 	appendTranscriptBody(lines, "Result transcript tail", transcriptLines.filter((line) => line.trim()), output.split(/\r?\n/).length > lineLimit);
