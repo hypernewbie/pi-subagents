@@ -7,11 +7,15 @@ function state(sessionId: string | null = "session-a"): SubagentState {
 	return { currentSessionId: sessionId } as SubagentState;
 }
 
-function waitResult(text: string, isError = false) {
+function waitResult(text: string, isError = false, windowElapsed = false) {
 	return {
 		content: [{ type: "text" as const, text }],
 		...(isError ? { isError: true } : {}),
-		details: { mode: "management" as const, results: [] } satisfies Details,
+		details: {
+			mode: "management" as const,
+			results: [],
+			...(windowElapsed ? { wait: { reason: "window_elapsed" as const, timedOut: true as const, activeRunIds: ["run-a"], activeProviderItems: [] } } : {}),
+		} satisfies Details,
 	};
 }
 
@@ -59,7 +63,7 @@ describe("headless background-work auto-drain", () => {
 		}), /provider reconcile failed/);
 	});
 
-	it("enforces one absolute timeout across repeated drains", async () => {
+	it("keeps its absolute deadline strict after a non-error wait window elapses", async () => {
 		let clock = 0;
 		await assert.rejects(() => drainOutstandingWork({
 			state: state(),
@@ -68,12 +72,81 @@ describe("headless background-work auto-drain", () => {
 			hasWork: () => true,
 			wait: async () => {
 				clock = 101;
-				return waitResult("first batch done");
+				return waitResult("Wait window elapsed; work remains active.", false, true);
 			},
 		}), /timed out after 100ms.*session 'session-a'/);
 	});
 
 	it("fails without a session identity", async () => {
 		await assert.rejects(() => drainOutstandingWork({ state: state(null) }), /without an active session identity/);
+	});
+
+	it("does not settle while a remembered detached foreground descendant is still in flight", async () => {
+		const current = state("owner");
+		current.foregroundRuns = new Map([["fg", {
+			runId: "fg", mode: "single", cwd: "/tmp", sessionId: "owner", updatedAt: 1,
+			children: [{ agent: "reviewer", index: 0, status: "detached", updatedAt: 1 }],
+		}]]);
+		let waits = 0;
+		await drainOutstandingWork({
+			state: current,
+			timeoutMs: 1000,
+			now: () => waits * 10,
+			wait: async () => {
+				waits++;
+				current.foregroundRuns!.get("fg")!.children[0]!.status = "completed";
+				return waitResult("done");
+			},
+		});
+		assert.equal(waits, 1);
+	});
+
+	it("yields to Pi for a pending supervisor turn and resumes draining the same work after resolution", async () => {
+		let pending = true;
+		let active = true;
+		let waits = 0;
+		const deps = {
+			state: state(),
+			hasPendingSupervisorRequest: () => pending,
+			hasWork: () => active,
+			wait: async () => {
+				waits++;
+				active = false;
+				return waitResult("done");
+			},
+		};
+
+		await drainOutstandingWork(deps);
+		assert.equal(waits, 0, "the queued supervisor triggerTurn must get control before drain blocks again");
+		assert.equal(active, true, "yielding must leave the owned workflow active");
+
+		pending = false;
+		await drainOutstandingWork(deps);
+		assert.equal(waits, 1, "the same workflow can continue and drain after the reply resolves the barrier");
+		assert.equal(active, false);
+	});
+
+	it("latches an inner supervisor yield even when the live request clears before continuation", async () => {
+		let pending = false;
+		let clock = 0;
+		let waits = 0;
+		await drainOutstandingWork({
+			state: state(),
+			timeoutMs: 50,
+			now: () => clock,
+			hasWork: () => true,
+			hasPendingSupervisorRequest: () => pending,
+			wait: async (_params, _signal, deps) => {
+				waits++;
+				assert.equal(typeof deps.hasPendingSupervisorRequest, "function");
+				clock = 100;
+				pending = false;
+				return {
+					content: [{ type: "text", text: "Wait yielded for a pending supervisor request." }],
+					details: { mode: "management", results: [], wait: { reason: "supervisor_request", timedOut: false, activeRunIds: ["run-a"], activeProviderItems: [] } },
+				};
+			},
+		});
+		assert.equal(waits, 1);
 	});
 });
