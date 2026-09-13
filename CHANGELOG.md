@@ -5,6 +5,7 @@
 ### Fixed
 
 - Let headless parent and nested coordinator sessions answer blocking child supervisor requests without deadlocking their final background-work drain. Thanks to [@ProDrifterDK](https://github.com/ProDrifterDK) for #2185.
+- Keep inferred read-only reviews free of implementation acceptance requirements when their topic includes release, migration, or security; explicit acceptance and actual write tasks retain their gates. Thanks to [@qsgy-edge](https://github.com/qsgy-edge) for #2191.
 - Include retention-managed async, output-artifact, and structured-output retrieval paths in native completion notices. Thanks to [@peedrr](https://github.com/peedrr) for #2181.
 - Remove workflow-owned one-shot result payloads together with their child-local result indexes after successful consumption. Thanks to [@peedrr](https://github.com/peedrr) for #2182.
 - Show runtime-registered agents in `/subagents` while keeping their extension-owned definitions read-only and rejecting collisions with disabled configured agents. Thanks to [@mystery4f](https://github.com/mystery4f) for #2169.
