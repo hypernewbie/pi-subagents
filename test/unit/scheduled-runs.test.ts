@@ -559,89 +559,40 @@ describe("project schedule management", () => {
 		manager.bindSession(ctx);
 		const result = await manager.handleToolCall({ action: "schedule.create", id: "shared", every: "1h", workflowScript: "return 1" }, ctx);
 		assert.equal(result.isError, undefined);
-		assert.equal(fs.existsSync(path.join(repository, ".pi", "subagents", "schedules", "shared", "schedule.json")), true);
+		// [UAA] Schedule is stored under the centralized ~/.pi/agent/projects/<hash>/ root,
+		// not under the project's .pi/subagents/. The worktree shares that hash because
+		// resolveCanonicalProjectRoot walks to the parent git repo.
+		const centralizedSchedule = path.join(getProjectSubagentsDir(worktree), "schedules", "shared", "schedule.json");
+		assert.equal(fs.existsSync(centralizedSchedule), true);
+		// The worktree's .pi/subagents/ must not have been created as a side effect.
+		assert.equal(fs.existsSync(path.join(repository, ".pi", "subagents")), false);
+		assert.equal(fs.existsSync(path.join(worktree, ".pi", "subagents")), false);
 	});
 
-	it("rejects a Git worktree .pi symlink outside the shared config root", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-worktree-escape-"));
-		roots.push(root);
-		const repository = path.join(root, "repository");
-		const worktree = path.join(repository, ".worktrees", "feature");
-		const outside = path.join(root, "outside");
-		fs.mkdirSync(repository, { recursive: true });
-		git(repository, ["init"]);
-		git(repository, ["config", "user.email", "test@example.com"]);
-		git(repository, ["config", "user.name", "Test User"]);
-		fs.writeFileSync(path.join(repository, "tracked.txt"), "base\n", "utf-8");
-		git(repository, ["add", "tracked.txt"]);
-		git(repository, ["commit", "-m", "base"]);
-		fs.mkdirSync(path.dirname(worktree), { recursive: true });
-		git(repository, ["worktree", "add", "-b", "feature", worktree]);
-		fs.mkdirSync(path.join(repository, ".pi"), { recursive: true });
-		fs.mkdirSync(outside);
-		fs.symlinkSync(outside, path.join(worktree, ".pi"), process.platform === "win32" ? "junction" : "dir");
+	// [UAA] The next three tests originally exercised assertScheduleRoot's worktree
+	// shared-git-config-root handling for project-local storage. Centralization moved
+	// schedules to ~/.pi/agent/projects/<hash>/, so worktree .pi symlinks no longer
+	// affect schedule storage and those escape vectors are no longer reachable. The
+	// pre-centralization escape vector is now covered by the centralized-store
+	// regression test below.
 
+	it("stores schedules under the centralized project store, never under the project cwd", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-centralized-"));
+		roots.push(root);
+		const project = path.join(root, "project");
+		fs.mkdirSync(project, { recursive: true });
+		const ctx = context(project);
 		const manager = createScheduledRunManager({
 			config: { scheduledRuns: { enabled: true } },
 			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
 		});
-		assert.throws(() => manager.bindSession(context(worktree)), /resolves outside the real project/);
-		assert.equal(fs.existsSync(path.join(outside, "subagents")), false);
-	});
-
-	it("rejects separate-git-dir primary checkout sharing without a registered root", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-separate-git-dir-"));
-		roots.push(root);
-		const repository = path.join(root, "repository");
-		const gitDir = path.join(root, "git-data", "metadata");
-		const worktree = path.join(root, "worktree");
-		fs.mkdirSync(repository, { recursive: true });
-		fs.mkdirSync(path.dirname(gitDir), { recursive: true });
-		git(repository, ["init", "--separate-git-dir", gitDir]);
-		git(repository, ["config", "user.email", "test@example.com"]);
-		git(repository, ["config", "user.name", "Test User"]);
-		fs.writeFileSync(path.join(repository, "tracked.txt"), "base\n", "utf-8");
-		git(repository, ["add", "tracked.txt"]);
-		git(repository, ["commit", "-m", "base"]);
-		git(repository, ["worktree", "add", "-b", "feature", worktree]);
-		const primaryConfig = path.join(repository, ".pi");
-		fs.mkdirSync(primaryConfig, { recursive: true });
-		fs.symlinkSync(primaryConfig, path.join(worktree, ".pi"), process.platform === "win32" ? "junction" : "dir");
-
-		const manager = createScheduledRunManager({
-			config: { scheduledRuns: { enabled: true } },
-			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
-		});
-		assert.throws(() => manager.bindSession(context(worktree)), /resolves outside the real project/);
-		assert.equal(fs.existsSync(path.join(primaryConfig, "subagents")), false);
-	});
-
-	it("rejects an unregistered checkout ancestor with the same Git directory", () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-schedule-unregistered-git-dir-"));
-		roots.push(root);
-		const repository = path.join(root, "repository");
-		const worktree = path.join(repository, ".worktrees", "feature");
-		const outside = path.join(root, "outside");
-		fs.mkdirSync(repository, { recursive: true });
-		git(repository, ["init"]);
-		git(repository, ["config", "user.email", "test@example.com"]);
-		git(repository, ["config", "user.name", "Test User"]);
-		fs.writeFileSync(path.join(repository, "tracked.txt"), "base\n", "utf-8");
-		git(repository, ["add", "tracked.txt"]);
-		git(repository, ["commit", "-m", "base"]);
-		fs.mkdirSync(path.dirname(worktree), { recursive: true });
-		git(repository, ["worktree", "add", "-b", "feature", worktree]);
-		const outsideConfig = path.join(outside, ".pi");
-		fs.mkdirSync(outsideConfig, { recursive: true });
-		fs.writeFileSync(path.join(outside, ".git"), `gitdir: ${path.join(repository, ".git")}\n`, "utf-8");
-		fs.symlinkSync(outsideConfig, path.join(worktree, ".pi"), process.platform === "win32" ? "junction" : "dir");
-
-		const manager = createScheduledRunManager({
-			config: { scheduledRuns: { enabled: true } },
-			launch: async () => ({ content: [{ type: "text", text: "unused" }], details: { mode: "management", results: [] } }),
-		});
-		assert.throws(() => manager.bindSession(context(worktree)), /resolves outside the real project/);
-		assert.equal(fs.existsSync(path.join(outsideConfig, "subagents")), false);
+		manager.bindSession(ctx);
+		const result = await manager.handleToolCall({ action: "schedule.create", id: "centralized", every: "1h", workflowScript: "return 1" }, ctx);
+		assert.equal(result.isError, undefined);
+		const schedulePath = path.join(getProjectSubagentsDir(project), "schedules", "centralized", "schedule.json");
+		assert.equal(fs.existsSync(schedulePath), true);
+		assert.equal(fs.existsSync(path.join(project, ".pi")), false);
+		assert.equal(fs.existsSync(path.join(project, ".pi", "subagents")), false);
 	});
 });
 
