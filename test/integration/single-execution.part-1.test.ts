@@ -29,6 +29,7 @@ import {
 	events,
 } from "../support/helpers.ts";
 import registerSubagentExtension from "../../src/extension/index.ts";
+import { getProjectSubagentsDir } from "../../src/shared/artifacts.ts";
 import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
@@ -333,7 +334,7 @@ defaultContext: fresh
 
 Answer only from the supplied synthetic text and return the requested structured result.
 `, "utf-8");
-		const refinementPath = path.join(tempDir, ".pi", "subagents", "refinements", `${agentName}.md`);
+		const refinementPath = path.join(getProjectSubagentsDir(tempDir), "refinements", `${agentName}.md`);
 		fs.mkdirSync(path.dirname(refinementPath), { recursive: true });
 		fs.writeFileSync(refinementPath, `<!-- pi-subagents-refinement:v1
 {
