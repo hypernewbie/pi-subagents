@@ -67,8 +67,10 @@ type ResultWatcherDeps = {
 
 type ResultFileChild = {
 	agent?: string;
+	sessionName?: string;
 	output?: string;
 	structuredOutput?: unknown;
+	structuredOutputPath?: string;
 	outputState?: SubagentOutputState;
 	error?: string;
 	success?: boolean;
@@ -80,6 +82,8 @@ type ResultFileChild = {
 	processSignal?: string | null;
 	sessionFile?: string;
 	artifactPaths?: { outputPath?: string };
+	outputSaveError?: string;
+	artifactOutputSaveFailed?: true;
 	intercomTarget?: string;
 	children?: unknown;
 };
@@ -425,7 +429,7 @@ export function createResultWatcher(
 			if (observerSucceeded) removeMissionObserverIndex(resultsDir, runId);
 			const epoch = deliveryEpoch;
 			if (!ownsCompletion(sessionId, completionOwnerId, epoch)) return;
-			// Recorded before dedupe and before the unlink below so subagent_wait can
+			// Recorded before dedupe and before the unlink below so bg_wait can
 			// use the in-memory record or its bounded durable replay after cleanup.
 			recordWaitCompletion(state, runId, data, Date.now(), completionTtlMs, {
 				resultsDir,
@@ -482,6 +486,7 @@ export function createResultWatcher(
 							: undefined;
 				return {
 					agent: result.agent ?? data.agent ?? `step-${index + 1}`,
+					...(result.sessionName ? { sessionName: result.sessionName } : {}),
 					status: resolveSubagentResultStatus({
 						success: result.success,
 						state: childState,
