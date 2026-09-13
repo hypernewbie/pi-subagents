@@ -1,3 +1,5 @@
+import type { IntercomBridgeConfig } from "../shared/types.ts";
+
 // This is the established extension-to-extension transport. The structured
 // delegation API intentionally reuses it instead of adding a second event
 // protocol. Unstructured legacy direct payloads are rejected.
@@ -6,11 +8,6 @@ export const SUBAGENT_DELEGATION_STARTED_EVENT = "prompt-template:subagent:start
 export const SUBAGENT_DELEGATION_UPDATE_EVENT = "prompt-template:subagent:update";
 export const SUBAGENT_DELEGATION_RESPONSE_EVENT = "prompt-template:subagent:response";
 export const SUBAGENT_DELEGATION_CANCEL_EVENT = "prompt-template:subagent:cancel";
-
-export interface SubagentDelegationTurnBudget {
-	maxTurns: number;
-	graceTurns?: number;
-}
 
 export interface SubagentDelegationToolBudget {
 	soft?: number;
@@ -37,10 +34,11 @@ export interface SubagentDelegationRequest {
 	model?: string;
 	thinking?: SubagentDelegationThinking;
 	timeoutMs?: number;
-	turnBudget?: SubagentDelegationTurnBudget;
 	toolBudget?: SubagentDelegationToolBudget;
 	skill?: string | string[] | boolean;
 	artifacts?: boolean;
+	/** Per-launch bridge config; replaces the global `intercomBridge` config. Pass the same value to preflight to compare digests. */
+	intercomBridge?: IntercomBridgeConfig;
 	result: SubagentDelegationResultRequest;
 }
 
@@ -69,7 +67,6 @@ export type SubagentDelegationStatus =
 	| "timed_out"
 	| "cancelled"
 	| "interrupted"
-	| "turn_budget_exhausted"
 	| "tool_budget_exhausted"
 	| "structured_output_failed"
 	| "acceptance_failed"
