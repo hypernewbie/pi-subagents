@@ -11,6 +11,7 @@ import { FLEET_STATUS_WIDGET_KEY } from "../../src/tui/fleet-status.ts";
 import { registerLivePromptAudit, rewritePromptWithGuidance } from "../../src/runs/foreground/prompt-audit.ts";
 import { getArtifactPaths, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import type { HerdrClient } from "../../src/inspectors/herdr/client.ts";
+import { createHerdrInspectorPlugin } from "../../src/inspectors/herdr/plugin.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
@@ -44,6 +45,7 @@ function writeAsyncRun(root: string, input: {
 	state?: "running" | "complete" | "failed";
 	mode?: "single" | "parallel" | "workflow";
 	lastUpdate?: number;
+	startedAt?: number;
 	agents?: string[];
 	contexts?: Array<"fresh" | "fork">;
 	models?: string[];
@@ -63,7 +65,7 @@ function writeAsyncRun(root: string, input: {
 		sessionId: input.sessionId ?? "session-current",
 		mode: input.mode ?? (agents.length > 1 ? "parallel" : "single"),
 		state,
-		startedAt: 100,
+		startedAt: input.startedAt ?? 100,
 		lastUpdate: input.lastUpdate ?? 200,
 		currentStep: 0,
 		steps: agents.map((agent, index) => ({
@@ -116,6 +118,7 @@ describe("native subagent fleet", () => {
 		const ctx = {
 			model,
 			signal: undefined,
+			sessionManager: { getSessionId: () => "fleet-rewrite-session" },
 			modelRegistry: {
 				async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test" }; },
 				getRegisteredProviderConfig() { return { api: "faux", streamSimple: streamFn }; },
@@ -230,7 +233,7 @@ describe("native subagent fleet", () => {
 			assert.match(initial, /Transcript path: \/outside\/trusted\/roots\/transcript\.jsonl/);
 			assert.doesNotMatch(initial, /Herdr ·|steer ·|stop ·/);
 			component.handleInput("H");
-			assert.match(component.render(120).join("\n"), /display-only and have no Herdr controls/);
+			assert.match(component.render(120).join("\n"), /display-only and have no inspector controls/);
 			component.handleInput("s");
 			assert.match(component.render(120).join("\n"), /display-only and remain controlled/);
 			component.handleInput("D");
@@ -306,6 +309,37 @@ describe("native subagent fleet", () => {
 			console.warn = originalWarn;
 			component.dispose();
 			clearExternalRuns();
+		}
+	});
+
+	it("does not crash Fleet render when live prompt audit stores a non-string authored task", () => {
+		const state = stateForTest();
+		const control = {
+			runId: "bad-prompt-run",
+			sessionId: "session-current",
+			mode: "single" as const,
+			startedAt: 10,
+			updatedAt: 20,
+			activeChildren: new Map([[0, { index: 0, agent: "worker", startedAt: 10, updatedAt: 20 }]]),
+		};
+		state.foregroundControls.set(control.runId, control);
+		registerLivePromptAudit(control, 0, { nested: "task payload" } as unknown as string, "effective prompt");
+		const component = new SubagentFleetComponent(
+			{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
+			theme as never,
+			state,
+			() => {},
+			{ refreshMs: 60_000, markdownTheme },
+		);
+		try {
+			assert.doesNotThrow(() => component.render(100));
+			const rendered = component.render(100).join("\n");
+			assert.doesNotMatch(rendered, /nested|task payload/);
+			component.handleInput("p");
+			assert.doesNotThrow(() => component.render(100));
+			assert.match(component.render(100).join("\n"), /Selected prompt unavailable/);
+		} finally {
+			component.dispose();
 		}
 	});
 
@@ -412,6 +446,29 @@ describe("native subagent fleet", () => {
 			assert.doesNotMatch(rendered, /SECRET/);
 		} finally {
 			component.dispose();
+		}
+	});
+
+	it("keeps tracked missing-start rows stable across opposing heartbeat updates", () => {
+		const state = stateForTest();
+		state.fleetJobs = new Map();
+		for (const [id, startedAt, status] of [
+			["known", 100, "running"], ["unknown-b", undefined, "running"], ["unknown-a", undefined, "queued"],
+		] as const) {
+			state.fleetJobs.set(id, {
+				asyncId: id, asyncDir: `/tmp/${id}`, sessionId: "session-current", status, startedAt,
+			});
+		}
+		for (const direction of [1, -1]) {
+			let heartbeat = 500;
+			for (const job of state.fleetJobs.values()) job.updatedAt = heartbeat += direction * 10;
+			const snapshot = collectFleetSnapshot(state);
+			assert.equal(snapshot.error, undefined);
+			assert.deepEqual(snapshot.items.map((item) => item.key), ["async:unknown-a", "async:unknown-b", "async:known"]);
+			for (const item of snapshot.items) {
+				const job = state.fleetJobs.get(item.runId)!;
+				assert.equal(item.run?.startedAt, job.startedAt ?? job.updatedAt);
+			}
 		}
 	});
 
@@ -596,8 +653,8 @@ describe("native subagent fleet", () => {
 		});
 		const snapshot = collectFleetSnapshot(state);
 		assert.deepEqual(snapshot.items.map((item) => item.key), [
-			"foreground-active:child-2:0",
 			"foreground-active:child-1:0",
+			"foreground-active:child-2:0",
 			"async:unrelated",
 			"async:workflow-1",
 		]);
@@ -666,6 +723,26 @@ describe("native subagent fleet", () => {
 		assert.ok(!snapshot.items.some((item) => item.runId === "terminal-0"));
 	});
 
+	it("orders active runs by start time so the roster stays stable while they emit", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-active-order-"));
+		try {
+			writeAsyncRun(root, { id: "worker-b", startedAt: 200, lastUpdate: 900 });
+			writeAsyncRun(root, { id: "worker-a", startedAt: 100, lastUpdate: 500 });
+			const state = stateForTest();
+			const keys = () => collectFleetSnapshot(state, { asyncDirRoot: root, resultsDir: path.join(root, "results") }).items.map((item) => item.key);
+			// First refresh: the run created first stays on top, even though worker-b emitted most recently.
+			assert.deepEqual(keys(), ["async:worker-a:0", "async:worker-b:0"]);
+			// Later activity on worker-b must not reorder the roster.
+			writeAsyncRun(root, { id: "worker-b", startedAt: 200, lastUpdate: 1500 });
+			assert.deepEqual(keys(), ["async:worker-a:0", "async:worker-b:0"]);
+			// A run started later still lands after the earlier ones.
+			writeAsyncRun(root, { id: "worker-c", startedAt: 300, lastUpdate: 300 });
+			assert.deepEqual(keys(), ["async:worker-a:0", "async:worker-b:0", "async:worker-c:0"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("accepts default Fleet navigation from Kitty CSI-u input", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-kitty-default-"));
 		try {
@@ -698,6 +775,7 @@ describe("native subagent fleet", () => {
 			writeAsyncRun(root, { id: "older", lastUpdate: 200 });
 			const state = stateForTest();
 			let closed = false;
+			let inspectCalls = 0;
 			const component = new SubagentFleetComponent(
 				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
 				theme as never,
@@ -708,7 +786,7 @@ describe("native subagent fleet", () => {
 					resultsDir: path.join(root, "results"),
 					refreshMs: 60_000,
 					fleetKeybindings: {
-						selectDown: ["n"],
+						selectDown: ["return"],
 						selectUp: ["p"],
 						steer: ["m"],
 						close: ["z"],
@@ -716,6 +794,7 @@ describe("native subagent fleet", () => {
 					actions: {
 						async steer() { return { text: "unused" }; },
 						stop() { return { text: "unused" }; },
+						async inspect() { inspectCalls++; return { text: "unexpected" }; },
 					},
 				},
 			);
@@ -724,8 +803,9 @@ describe("native subagent fleet", () => {
 				assert.match(selectedLine(), /newer/);
 				component.handleInput("j");
 				assert.match(selectedLine(), /newer/, "default j should not move when selectDown is overridden");
-				component.handleInput("\x1b[110;1u");
-				assert.match(selectedLine(), /older/, "custom selectDown should accept Kitty CSI-u input");
+				component.handleInput("\r");
+				assert.match(selectedLine(), /older/, "custom Enter binding should move instead of opening Herdr");
+				assert.equal(inspectCalls, 0);
 				component.handleInput("p");
 				assert.match(selectedLine(), /newer/);
 				component.handleInput("m");
@@ -1373,7 +1453,7 @@ describe("native subagent fleet", () => {
 		}
 	});
 
-	it("focuses the Herdr pane the operator opens with the inspect key", async () => {
+	it("focuses the inspector pane the operator opens with the inspect key", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-inspect-focus-"));
 		try {
 			const asyncDir = writeAsyncRun(root, { id: "run-focus", agents: ["worker"] });
@@ -1388,7 +1468,7 @@ describe("native subagent fleet", () => {
 				updatedAt: 200,
 			});
 			const calls: string[][] = [];
-			const herdrClient: HerdrClient = {
+			const client: HerdrClient = {
 				run: async <T>(args: string[]) => {
 					calls.push(args);
 					if (args[0] === "--version") return { ok: true, data: "herdr 0.7.5" as T };
@@ -1415,7 +1495,7 @@ describe("native subagent fleet", () => {
 				},
 			};
 
-			await openSubagentFleet(ctx as never, state, { asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000, herdrClient });
+			await openSubagentFleet(ctx as never, state, { asyncDirRoot: root, resultsDir: path.join(root, "results"), refreshMs: 60_000, inspectorPlugins: [createHerdrInspectorPlugin({ client })], inspectorEnv: { HERDR_ENV: "1", HERDR_PANE_ID: "test-pane" } });
 			const split = calls.find((args) => args[0] === "pane" && args[1] === "split");
 			assert.ok(split, `no pane split call: ${JSON.stringify(calls)}`);
 			assert.deepEqual(split.slice(-1), ["--focus"]);
@@ -1552,8 +1632,8 @@ describe("native subagent fleet", () => {
 		}
 	});
 
-	it("opens the selected async child in a Herdr inspector", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-herdr-"));
+	it("opens the selected async child in an inspector", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-fleet-inspector-"));
 		try {
 			const asyncDir = writeAsyncRun(root, { id: "async-herdr" });
 			const calls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
@@ -1574,9 +1654,15 @@ describe("native subagent fleet", () => {
 				},
 			);
 			try {
-				component.handleInput("H");
+				component.handleInput("\r");
 				await new Promise((resolve) => setImmediate(resolve));
 				assert.deepEqual(calls, [{ runId: "async-herdr", asyncDir, index: 0 }]);
+				component.handleInput("H");
+				await new Promise((resolve) => setImmediate(resolve));
+				assert.deepEqual(calls, [
+					{ runId: "async-herdr", asyncDir, index: 0 },
+					{ runId: "async-herdr", asyncDir, index: 0 },
+				]);
 				assert.ok(component.render(100).some((line) => line.includes("Inspector opened.")));
 			} finally {
 				component.dispose();
@@ -1592,6 +1678,7 @@ describe("native subagent fleet", () => {
 			const asyncDir = writeAsyncRun(root, { id: "async-stop" });
 			const state = stateForTest();
 			const calls: Array<{ runId: string; asyncDir: string; index?: number }> = [];
+			let inspectCalls = 0;
 			const component = new SubagentFleetComponent(
 				{ terminal: { rows: 28, columns: 100 }, requestRender() {} } as never,
 				theme as never,
@@ -1601,6 +1688,7 @@ describe("native subagent fleet", () => {
 					asyncDirRoot: root,
 					resultsDir: path.join(root, "results"),
 					refreshMs: 60_000,
+					fleetKeybindings: { stop: ["return"] },
 					actions: {
 						async steer() {
 							return { text: "unused" };
@@ -1609,15 +1697,17 @@ describe("native subagent fleet", () => {
 							calls.push(input);
 							return { text: "Stop requested." };
 						},
+						async inspect() { inspectCalls++; return { text: "unexpected" }; },
 					},
 				},
 			);
 			try {
-				component.handleInput("D");
+				component.handleInput("\r");
 				assert.ok(component.render(100).some((line) => line.includes("Confirm stop for async run async-stop")));
+				assert.equal(inspectCalls, 0);
 				component.handleInput("n");
 				assert.deepEqual(calls, []);
-				component.handleInput("D");
+				component.handleInput("\r");
 				component.handleInput("y");
 				await new Promise((resolve) => setImmediate(resolve));
 				assert.deepEqual(calls, [{ runId: "async-stop", asyncDir, index: 0 }]);
