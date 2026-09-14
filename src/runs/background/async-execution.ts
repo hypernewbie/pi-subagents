@@ -20,6 +20,7 @@ import { applyThinkingSuffix, getHostBuiltinToolNames, projectLaunchResolvedChil
 import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { applyWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchdog/rules.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveExistingReadInstructionPaths, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
+import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
 import { PI_CODING_AGENT_PACKAGE, resolveBunPiExecutable, resolveInstalledPiPackageRoot, resolvePiPackageRoot } from "../shared/pi-spawn.ts";
@@ -930,7 +931,8 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
-	const progressDir = params.progressDir ?? runnerCwd;
+	// [UAA] Fall back to centralised project directory rather than repo root
+	const progressDir = params.progressDir ?? getProjectSubagentsDir(runnerCwd);
 	const graphChain: ChainStep[] = params.attachRoot
 		? [{
 				agent: params.attachRoot.agent,

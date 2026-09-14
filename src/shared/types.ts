@@ -231,7 +231,6 @@ export interface WorkflowReceipt {
 	state: WorkflowReceiptState;
 	createdAt: number;
 	entries: Record<string, WorkflowReceiptEntry>;
-	argsDigest?: string;
 	resource?: WorkflowResourceProvenance;
 	hostSteps?: HostStepNode[];
 	workflowChildren?: WorkflowChildSummary;
@@ -1482,8 +1481,6 @@ export interface Details {
 	mission?: MissionRecord;
 	workflow?: {
 		value?: unknown;
-		args?: Record<string, unknown>;
-		argsDigest?: string;
 		resource?: WorkflowResourceProvenance;
 		preflightWarnings?: string[];
 		trace: Array<{
@@ -2670,13 +2667,13 @@ export interface ExtensionConfig {
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
-	/** Enable managed worktrees when a launch does not provide an explicit value. */
+/** Enable managed worktrees when a launch does not provide an explicit value. */
 	worktree?: boolean;
 	/** Worktree allocator selection. Defaults to auto. */
 	worktreeProvider?: WorktreeProvider;
 	/** Namespace used by managed worktree branches. Defaults to pi-subagents/. */
 	worktreeBranchPrefix?: string;
-	/** Where to store subagent artifact files. Defaults to "session" (the pi session directory, or OS temp when unavailable). Set to "project" for cwd/.pi/subagents. */
+	/** Where to store subagent artifact files. Defaults to "session" (the pi session directory, or OS temp when unavailable). Set to "project" for ~/.pi/agent/projects/<hash>/artifacts. */
 	artifactDir?: ArtifactDirPreference;
 	/** Artifact cleanup retention. Set cleanupDays to 0 to disable cleanup. */
 	artifactConfig?: Pick<ArtifactConfig, "cleanupDays">;

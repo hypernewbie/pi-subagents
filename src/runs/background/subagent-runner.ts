@@ -18,7 +18,7 @@ import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, consumeStopRequestPayloads, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, watchAsyncControlInbox, type SteerRequest, type StopRequest } from "./control-channel.ts";
-import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
+import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, getProjectSubagentsDir, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
@@ -1798,9 +1798,14 @@ function captureParallelWorktreeDiffs(
 }
 
 function ensureParallelProgressFile(cwd: string, group: Extract<RunnerStep, { parallel: SubagentStep[] }>): void {
-	const progressPath = path.join(cwd, "progress.md");
-	if (!group.parallel.some((task) => task.task.includes(`Update progress at: ${progressPath}`))) return;
-	writeInitialProgressFile(cwd);
+	if (group.progress?.path) {
+		if (group.progress.initialize !== false) writeInitialProgressFile(path.dirname(group.progress.path));
+		return;
+	}
+	const progressDir = getProjectSubagentsDir(cwd);
+	const progressPath = path.join(progressDir, "progress.md");
+	if (!group.parallel.some((task) => task.task.includes(`Update progress at: ${progressPath}`) || task.task.includes(`Update progress at: ${path.join(cwd, "progress.md")}`))) return;
+	writeInitialProgressFile(progressDir);
 }
 
 function resolveAsyncStepTranscriptPath(input: {

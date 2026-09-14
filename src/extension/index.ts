@@ -24,7 +24,7 @@ import { appendAdvertisedAgentPrompt, buildAdvertisedAgentPrompt } from "../agen
 import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
 import { registerRuntimeAgentEventListener } from "../agents/runtime-agent-events.ts";
 import { ensureAccessibleDir } from "../shared/accessible-dir.ts";
-import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.ts";
+import { cleanupAllArtifactDirs, cleanupOldArtifacts, cleanupOrphanedSessionDirs, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import { isStaleExtensionContextError, withCachedUiContext } from "../shared/extension-context.ts";
@@ -594,6 +594,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 					cleanupResultIndexes(DIRS.results);
 				} catch (error) {
 					console.error("Failed to clean stale subagent result indexes:", error);
+				}
+				try {
+					cleanupOrphanedSessionDirs();
+				} catch (error) {
+					console.error("Failed to sweep orphaned session directories:", error);
 				}
 			}, 30_000);
 			resultIndexCleanupTimer.unref?.();
