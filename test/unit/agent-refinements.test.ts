@@ -9,6 +9,7 @@ import {
 	handleRefinementAction,
 	validateRefinementProposal,
 } from "../../src/agents/agent-refinements.ts";
+import { getProjectSubagentsDir } from "../../src/shared/artifacts.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 let tempDir = "";
@@ -37,7 +38,7 @@ function writeProjectAgent(name = "worker"): void {
 }
 
 function writeEvidence(agent = "worker"): void {
-	const dir = path.join(tempDir, ".pi/subagents", "artifacts");
+	const dir = path.join(getProjectSubagentsDir(tempDir), "artifacts");
 	fs.mkdirSync(dir, { recursive: true });
 	fs.writeFileSync(path.join(dir, "run_worker_meta.json"), JSON.stringify({
 		runId: "run",
@@ -64,7 +65,7 @@ describe("agent refinements", () => {
 	});
 
 	it("uses a project-local path and rejects traversal", () => {
-		assert.equal(getAgentRefinementPath(tempDir, "worker"), path.join(tempDir, ".pi/subagents", "refinements", "worker.md"));
+		assert.equal(getAgentRefinementPath(tempDir, "worker"), path.join(getProjectSubagentsDir(tempDir), "refinements", "worker.md"));
 		assert.throws(() => getAgentRefinementPath(tempDir, "../worker"), /cannot be used/);
 	});
 

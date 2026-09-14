@@ -65,9 +65,55 @@ export class Container {
     this.children.push(child);
   }
 
+  clear() {
+    this.children.length = 0;
+  }
+
   render(width) {
     return this.children.flatMap((child) => child.render(width));
   }
+}
+
+export class Box {
+  constructor() {
+    this.children = [];
+  }
+  addChild(child) {
+    this.children.push(child);
+  }
+  render(width) {
+    return this.children.flatMap((child) => child.render(width));
+  }
+}
+
+export const Key = {
+  ctrl: (k) => k,
+  alt: (k) => k,
+  shift: (k) => k,
+  ctrlAlt: (k) => k,
+  ctrlShift: (k) => k,
+};
+
+export function isKeyRelease() { return false; }
+export function matchesKey() { return false; }
+export function fuzzyFilter(items, query, text = (item) => String(item)) {
+  const needle = String(query).toLowerCase();
+  return items.filter((item) => text(item).toLowerCase().includes(needle));
+}
+
+export class Input {
+  constructor() { this.focused = false; this.value = ""; }
+  getText() { return this.value; }
+  setText(value) { this.value = String(value); }
+  handleInput() {}
+}
+
+export function truncateToWidth(text, width) {
+  return String(text).slice(0, width);
+}
+
+export function wrapTextWithAnsi(text, width) {
+  return wrapText(text, width);
 }
 `;
 
@@ -75,10 +121,40 @@ function asDataModule(source) {
   return `data:text/javascript,${encodeURIComponent(source)}`;
 }
 
+const agentCoreShim = `
+export class AgentToolResult {}
+export class Agent {}
+`;
+
+const aiShim = `
+export class StringEnum {}
+export function streamSimple() { return { async *[Symbol.asyncIterator]() {} }; }
+export function completeSimple() { return Promise.resolve({}); }
+`;
+
 export function resolve(specifier, context, nextResolve) {
-  if (context.parentURL?.endsWith("/render.ts")) {
-    if (specifier === "@earendil-works/pi-tui") {
-      return { url: asDataModule(renderPiTuiShim), shortCircuit: true };
+  // Only substitute pi-tui with the lightweight stub when imported from
+  // tui/render.ts. Other call sites (extension/index.ts, tui/fleet.ts, etc.)
+  // use the real @earendil-works/pi-tui package so the renderer components
+  // (Box, Container, ...) get real padding / behaviour instead of the
+  // flatMap stand-in below.
+  if (specifier === "@earendil-works/pi-tui" && context.parentURL?.endsWith("/render.ts")) {
+    return { url: asDataModule(renderPiTuiShim), shortCircuit: true };
+  }
+
+  if (specifier === "@earendil-works/pi-agent-core") {
+    return { url: asDataModule(agentCoreShim), shortCircuit: true };
+  }
+
+  if (specifier.startsWith("@earendil-works/pi-ai")) {
+    return { url: asDataModule(aiShim), shortCircuit: true };
+  }
+
+  if (specifier === "@earendil-works/pi-coding-agent") {
+    const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+    const shimFile = path.join(rootDir, "test/fixtures/pi-coding-agent-shim/index.js");
+    if (fs.existsSync(shimFile)) {
+      return { url: new URL(`file://${process.platform === "win32" ? "/" : ""}${shimFile.replace(/\\/g, "/")}`).href, shortCircuit: true };
     }
   }
 

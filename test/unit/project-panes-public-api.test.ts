@@ -138,8 +138,9 @@ describe("public project-panes package export", () => {
 		const previousPiBinary = process.env.PI_SUBAGENT_PI_BINARY;
 		process.env.PI_SUBAGENT_PI_BINARY = path.join(root, "pi-bin");
 		try {
-			fs.mkdirSync(path.join(root, ".pi"));
-			fs.writeFileSync(path.join(root, ".pi/subagents"), "directory collision");
+			const bindingPath = projectPaneBindingPath(root);
+			fs.mkdirSync(path.dirname(path.dirname(bindingPath)), { recursive: true });
+			fs.writeFileSync(path.dirname(bindingPath), "directory collision");
 			const calls: string[][] = [];
 			const client: ProjectPaneCommandClient = {
 				run: async <T>(args: string[]) => {
