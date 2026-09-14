@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createOrcaProgressTab, resolveOrcaCommand, resolvePiSessionId } from "../../src/runs/shared/orca-progress-tabs.ts";
+import { getProjectSubagentsDir } from "../../src/shared/artifacts.ts";
 import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import { writeNodeCommand } from "../support/node-command.ts";
 
@@ -186,7 +187,7 @@ test("malformed optional observer metadata cannot break child execution", { skip
 	await tab.creationSettled;
 	const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
 	assert.equal(args[args.indexOf("--title") + 1], "subagents · subagent · 1");
-	const manifestDir = path.join(dir, ".pi", "subagents", "views", "orca");
+	const manifestDir = path.join(getProjectSubagentsDir(dir), "views", "orca");
 	const [manifestName] = fs.readdirSync(manifestDir);
 	const manifest = JSON.parse(fs.readFileSync(path.join(manifestDir, manifestName!), "utf-8"));
 	assert.equal(manifest.state, "open");
@@ -235,7 +236,7 @@ test("creationSettled publishes the final manifest after capture and finish", { 
 	assert.ok(tab);
 	let settled = false;
 	void tab.creationSettled.then(() => { settled = true; });
-	const manifestDir = path.join(dir, ".pi", "subagents", "views", "orca");
+	const manifestDir = path.join(getProjectSubagentsDir(dir), "views", "orca");
 	const [manifestName] = fs.readdirSync(manifestDir);
 	const manifestPath = path.join(manifestDir, manifestName!);
 	try {
@@ -290,7 +291,7 @@ test("enabled tabs use a worktree sequence and successful Pi sessions get cleanu
 	assert.doesNotMatch(viewer, /(?:&|;)\s*exit(?:\s|$)/);
 
 	const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
-	const manifestDir = path.join(dir, ".pi", "subagents", "views", "orca");
+	const manifestDir = path.join(getProjectSubagentsDir(dir), "views", "orca");
 	const manifestName = fs.readdirSync(manifestDir).find((name) => name.startsWith(`${runId}-2-`) && name.endsWith(".json"));
 	assert.ok(manifestName);
 	const manifest = JSON.parse(fs.readFileSync(path.join(manifestDir, manifestName), "utf-8")) as Record<string, unknown>;
@@ -560,7 +561,7 @@ test("create stdout preserves pretty-printed JSON in the observer manifest", { s
 	const tab = createOrcaProgressTab({ cwd: dir, runId, agent: "worker", index: 0, config: { enabled: true }, command: fakeOrca });
 	assert.ok(tab);
 	await tab.creationSettled;
-	const manifestDir = path.join(dir, ".pi", "subagents", "views", "orca");
+	const manifestDir = path.join(getProjectSubagentsDir(dir), "views", "orca");
 	const manifestName = fs.readdirSync(manifestDir).find((name) => name.startsWith(`${runId}-0-`) && name.endsWith(".json"));
 	assert.ok(manifestName);
 	const manifest = JSON.parse(fs.readFileSync(path.join(manifestDir, manifestName), "utf-8")) as Record<string, unknown>;
