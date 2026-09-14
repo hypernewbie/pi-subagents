@@ -1,13 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
+import { ensureProjectStore, projectHash } from "../../shared/project-store.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { withFileLease } from "../../shared/file-lease.ts";
 import { shortenPath } from "../../shared/formatters.ts";
+import { getAgentDir } from "../../shared/utils.ts";
 import type { AsyncStatus, Details, ExtensionConfig } from "../../shared/types.ts";
 import type { SubagentParamsLike } from "../foreground/subagent-executor.ts";
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
@@ -20,6 +21,13 @@ import { deepFreezeWorkflowArgs, normalizeWorkflowArgs } from "../../workflows/w
 import { readMission, resolveMissionStoreLocation, validateMissionId } from "../../missions/store.ts";
 
 import { calendarDateAfter, latestCalendarOccurrence, nextCalendarOccurrence, normalizeCalendarRule, restoreCalendarTrigger, type CalendarTrigger } from "./calendar-schedule.ts";
+
+export interface ScheduleStoreLocation {
+	root: string;
+	trustedBase: string;
+	/** Optional secondary trusted base (e.g. shared git-config dir for git worktrees). */
+	additionalTrustedBase?: string;
+}
 
 export const SCHEDULED_RUN_ACTIONS = [
 	"schedule.create",
@@ -102,10 +110,26 @@ export function scheduledRunsEnabled(config: ExtensionConfig): boolean {
 	return config.scheduledRuns?.enabled !== false;
 }
 
+export function resolveScheduleStoreLocation(cwd: string, storeRoot?: string): ScheduleStoreLocation {
+	const key = projectHash(cwd);
+	if (!storeRoot) {
+		const trustedBase = path.join(getAgentDir(), "projects");
+		return { trustedBase, root: path.join(trustedBase, key, "schedules") };
+	}
+	const trustedBase = path.resolve(storeRoot);
+	// [UAA] When an explicit storeRoot is given, allow the project's shared git-config
+	// root (used by worktrees with separate-git-dir layouts) as a secondary trusted base
+	// so schedules living under that shared dir are still considered trusted.
+	const additionalTrustedBase = resolveSharedGitConfigRoot(cwd);
+	return {
+		trustedBase,
+		root: path.join(trustedBase, key),
+		...(additionalTrustedBase !== undefined ? { additionalTrustedBase } : {}),
+	};
+}
+
 export function scheduledRunStorePath(cwd: string, _sessionId?: string, root?: string): string {
-	if (!root) return path.join(getProjectSubagentsDir(path.resolve(cwd)), "schedules");
-	const projectKey = createHash("sha256").update(path.resolve(cwd)).digest("hex").slice(0, 20);
-	return path.join(root, projectKey);
+	return resolveScheduleStoreLocation(cwd, root).root;
 }
 
 export function parseScheduledRunTime(at: string, now = Date.now()): number {
@@ -234,36 +258,54 @@ function resolveSharedGitConfigRoot(projectCwd: string): string | undefined {
 	return undefined;
 }
 
-function assertScheduleRoot(root: string, projectCwd: string | undefined, create: boolean): void {
-	if (!projectCwd) {
-		if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-		return;
+// Strict validation for schedule store roots preventing symlink/junction escapes
+function assertScheduleRoot(root: string, trustedBase: string, create: boolean, additionalTrustedBase?: string): void {
+	const resolvedRoot = path.resolve(root);
+	const resolvedTrustedBase = path.resolve(trustedBase);
+
+	if (create) {
+		fs.mkdirSync(resolvedTrustedBase, { recursive: true, mode: 0o700 });
 	}
-	let projectPath: string;
+
+	let realTrustedBase: string;
 	try {
-		projectPath = fs.realpathSync.native(projectCwd);
+		realTrustedBase = fs.realpathSync.native(resolvedTrustedBase);
 	} catch (error) {
 		if (!create && (error as NodeJS.ErrnoException).code === "ENOENT") return;
 		throw error;
 	}
-	let existing = root;
+
+	let realAdditionalTrustedBase: string | undefined;
+	if (additionalTrustedBase !== undefined) {
+		try {
+			realAdditionalTrustedBase = fs.realpathSync.native(path.resolve(additionalTrustedBase));
+		} catch {
+			realAdditionalTrustedBase = undefined;
+		}
+	}
+
+	let existing = resolvedRoot;
 	while (!fs.existsSync(existing)) {
 		const parent = path.dirname(existing);
 		if (parent === existing) break;
 		existing = parent;
 	}
-	const existingPath = fs.realpathSync.native(existing);
-	const sharedGitConfigRoot = pathWithin(projectPath, existingPath) ? undefined : resolveSharedGitConfigRoot(projectCwd);
-	const isTrustedPath = (candidate: string): boolean => pathWithin(projectPath, candidate)
-		|| (sharedGitConfigRoot !== undefined && pathWithin(sharedGitConfigRoot, candidate));
-	if (!isTrustedPath(existingPath)) throw new Error(`Project schedule root '${root}' resolves outside the real project.`);
+
+	const isTrustedPath = (candidate: string): boolean => pathWithin(realTrustedBase, candidate)
+		|| (realAdditionalTrustedBase !== undefined && pathWithin(realAdditionalTrustedBase, candidate));
+	const realExisting = fs.realpathSync.native(existing);
+	if (!isTrustedPath(realExisting)) {
+		throw new Error(`Project schedule root '${root}' resolves outside the trusted root.`);
+	}
 	if (!create) return;
-	fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-	if (!isTrustedPath(fs.realpathSync.native(root))) throw new Error(`Project schedule root '${root}' resolves outside the real project.`);
+	fs.mkdirSync(resolvedRoot, { recursive: true, mode: 0o700 });
+	if (!isTrustedPath(fs.realpathSync.native(resolvedRoot))) {
+		throw new Error(`Project schedule root '${root}' resolves outside the trusted root.`);
+	}
 }
 
-function scheduleDir(root: string, id: string, create = false, projectCwd?: string): string {
-	assertScheduleRoot(root, projectCwd, create);
+function scheduleDir(root: string, id: string, create = false, trustedBase = path.dirname(root), additionalTrustedBase?: string): string {
+	assertScheduleRoot(root, trustedBase, create, additionalTrustedBase);
 	const dir = path.join(root, validateScheduleId(id));
 	try {
 		const stat = fs.lstatSync(dir);
@@ -335,19 +377,27 @@ function parseSchedule(value: unknown, file: string): ScheduleRecord {
 
 class ScheduleStore {
 	readonly root: string;
-	private readonly projectCwd?: string;
+	readonly trustedBase: string;
+	readonly additionalTrustedBase?: string;
 
-	constructor(root: string, projectCwd?: string) {
-		this.root = root;
-		this.projectCwd = projectCwd;
+	constructor(locationOrRoot: ScheduleStoreLocation | string, trustedBase?: string) {
+		if (typeof locationOrRoot === "string") {
+			this.root = locationOrRoot;
+			this.trustedBase = trustedBase ?? path.dirname(locationOrRoot);
+			this.additionalTrustedBase = undefined;
+		} else {
+			this.root = locationOrRoot.root;
+			this.trustedBase = locationOrRoot.trustedBase;
+			this.additionalTrustedBase = locationOrRoot.additionalTrustedBase;
+		}
 	}
 
 	directory(id: string, create = false): string {
-		return scheduleDir(this.root, id, create, this.projectCwd);
+		return scheduleDir(this.root, id, create, this.trustedBase, this.additionalTrustedBase);
 	}
 
 	ids(): string[] {
-		assertScheduleRoot(this.root, this.projectCwd, false);
+		assertScheduleRoot(this.root, this.trustedBase, false, this.additionalTrustedBase);
 		if (!fs.existsSync(this.root)) return [];
 		return fs.readdirSync(this.root, { withFileTypes: true })
 			.filter((entry) => entry.isDirectory() && SCHEDULE_ID.test(entry.name))
@@ -366,21 +416,21 @@ class ScheduleStore {
 
 	/** Like {@link get}, but returns undefined when the schedule no longer exists. */
 	find(id: string): ScheduleRecord | undefined {
-		const file = path.join(scheduleDir(this.root, id, false, this.projectCwd), "schedule.json");
+		const file = path.join(scheduleDir(this.root, id, false, this.trustedBase, this.additionalTrustedBase), "schedule.json");
 		if (!fs.existsSync(file)) return undefined;
 		return parseSchedule(readJson(file, "schedule record"), file);
 	}
 
 	write(record: ScheduleRecord): void {
-		writePrivateAtomicJson(path.join(scheduleDir(this.root, record.id, true, this.projectCwd), "schedule.json"), record);
+		writePrivateAtomicJson(path.join(scheduleDir(this.root, record.id, true, this.trustedBase, this.additionalTrustedBase), "schedule.json"), record);
 	}
 
 	delete(id: string): void {
-		fs.rmSync(scheduleDir(this.root, id, false, this.projectCwd), { recursive: true, force: true });
+		fs.rmSync(scheduleDir(this.root, id, false, this.trustedBase, this.additionalTrustedBase), { recursive: true, force: true });
 	}
 
 	history(id: string): ScheduleRunRecord[] {
-		const file = path.join(scheduleDir(this.root, id, false, this.projectCwd), "history.json");
+		const file = path.join(scheduleDir(this.root, id, false, this.trustedBase, this.additionalTrustedBase), "history.json");
 		if (!fs.existsSync(file)) return [];
 		const value = readJson(file, "schedule history") as { schemaVersion?: unknown; runs?: unknown };
 		if (value?.schemaVersion !== 1 || !Array.isArray(value.runs)) throw new Error(`Schedule history '${file}' has invalid fields.`);
@@ -390,7 +440,7 @@ class ScheduleStore {
 	/** The run's own receipt; it is written before history.json and is never trimmed. */
 	getRun(id: string, runId: string): ScheduleRunRecord | undefined {
 		if (!SCHEDULE_ID.test(runId)) throw new Error(`Invalid schedule run id '${runId}'.`);
-		const file = path.join(scheduleDir(this.root, id, false, this.projectCwd), "runs", `${runId}.json`);
+		const file = path.join(scheduleDir(this.root, id, false, this.trustedBase, this.additionalTrustedBase), "runs", `${runId}.json`);
 		if (!fs.existsSync(file)) return undefined;
 		const run = readJson(file, "schedule run") as ScheduleRunRecord;
 		if (run?.id !== runId || run.scheduleId !== id) throw new Error(`Schedule run '${file}' has invalid fields.`);
@@ -398,7 +448,7 @@ class ScheduleStore {
 	}
 
 	writeRun(schedule: ScheduleRecord, run: ScheduleRunRecord, event: string): void {
-		const dir = scheduleDir(this.root, schedule.id, true, this.projectCwd);
+		const dir = scheduleDir(this.root, schedule.id, true, this.trustedBase, this.additionalTrustedBase);
 		writePrivateAtomicJson(path.join(dir, "runs", `${run.id}.json`), run);
 		// Sessions sharing this project update history.json from their own snapshots.
 		withFileLease(path.join(dir, "history.json"), () => {
@@ -412,7 +462,7 @@ class ScheduleStore {
 	}
 
 	appendEvent(schedule: ScheduleRecord, event: string): void {
-		const dir = scheduleDir(this.root, schedule.id, true, this.projectCwd);
+		const dir = scheduleDir(this.root, schedule.id, true, this.trustedBase, this.additionalTrustedBase);
 		fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 		fs.appendFileSync(path.join(dir, "events.jsonl"), `${JSON.stringify({ schemaVersion: 1, timestamp: new Date().toISOString(), event, scheduleId: schedule.id })}\n`, { encoding: "utf-8", mode: 0o600 });
 	}
@@ -553,7 +603,8 @@ function scheduleBelongsToSession(schedule: ScheduleRecord, ctx: ExtensionContex
 }
 
 export function listScheduledRunSummaries(cwd: string, root?: string): ScheduleRecord[] {
-	return new ScheduleStore(scheduledRunStorePath(cwd, undefined, root), root === undefined ? path.resolve(cwd) : undefined).list();
+	const location = resolveScheduleStoreLocation(cwd, root);
+	return new ScheduleStore(location).list();
 }
 
 export class ScheduledRunManager {
@@ -1079,18 +1130,21 @@ export class ScheduledRunManager {
 
 	private selectProject(cwd: string, ctx: ExtensionContext): void {
 		const projectCwd = path.resolve(cwd);
-		const root = scheduledRunStorePath(projectCwd, undefined, this.deps.storeRoot);
+		const location = resolveScheduleStoreLocation(projectCwd, this.deps.storeRoot);
 		const isBoundContext = path.resolve(ctx.cwd) === projectCwd;
-		const previousContext = this.contexts.get(root);
+		const previousContext = this.contexts.get(location.root);
 		const contextChanged = isBoundContext
 			&& previousContext !== undefined
 			&& normalizedSessionFile(previousContext.sessionManager.getSessionFile()) !== normalizedSessionFile(ctx.sessionManager.getSessionFile());
-		if (isBoundContext) this.contexts.set(root, snapshotContext(ctx, projectCwd));
-		else if (!this.contexts.has(root)) throw new Error(`Cannot use project '${projectCwd}' until that project has been opened in this runtime.`);
-		let store = this.stores.get(root);
+		if (isBoundContext) this.contexts.set(location.root, snapshotContext(ctx, projectCwd));
+		else if (!this.contexts.has(location.root)) throw new Error(`Cannot use project '${projectCwd}' until that project has been opened in this runtime.`);
+		let store = this.stores.get(location.root);
 		if (!store) {
-			store = new ScheduleStore(root, this.deps.storeRoot === undefined ? projectCwd : undefined);
-			this.stores.set(root, store);
+			if (!this.deps.storeRoot) {
+				ensureProjectStore(projectCwd);
+			}
+			store = new ScheduleStore(location);
+			this.stores.set(location.root, store);
 			this.restore(store);
 		} else if (contextChanged) {
 			this.restore(store);

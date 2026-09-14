@@ -4,7 +4,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { discoverAgents, discoverAgentsAll, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
-import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
+import { getArtifactsDir, getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
 import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
@@ -5295,7 +5295,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	const publicExecutions = new WeakSet<object>();
 	const workflowResourcePermits = new WeakMap<object, WorkflowResourcePermit>();
 	const workflowPermitContexts = new WeakMap<object, { root: WorkflowChildPermit } | { child: WorkflowChildPermitContext }>();
-	const warnedArtifactPackageDirs = new Set<string>();
 	const scheduledOwnerExecutors = new Map<string | null, Map<string, { state: SubagentState; executor: ReturnType<typeof createSubagentExecutor> }>>();
 	const disabledFeatures = resolveDisabledFeatureSurface(deps.config);
 	const disabledFeatureResult = (params: SubagentParamsLike): AgentToolResult<Details> | undefined => {
@@ -5437,11 +5436,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				dir: deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir,
 			});
 			const workflowArtifactsDir = getArtifactsDir(ctx.sessionManager.getSessionFile() ?? null, workflowCwd, workflowArtifactConfig.dir);
-			if (workflowArtifactConfig.dir === "project" && !warnedArtifactPackageDirs.has(workflowCwd)) {
-				warnedArtifactPackageDirs.add(workflowCwd);
-				const warning = getProjectArtifactPackagingWarning(workflowCwd);
-				if (warning) console.warn(`[pi-subagents] ${warning}`);
-			}
 			const chatProgressResult = resolveWorkflowChatProgress({ requested: requestParams.chatProgress, parentCwd, workflowCwd, background: requestParams.async !== false });
 			if (chatProgressResult.error) return { content: [{ type: "text", text: chatProgressResult.error }], isError: true, details: { mode: "workflow", results: [] } };
 			const chatProgress = chatProgressResult.projection!;
@@ -7551,11 +7545,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			dir: deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir,
 		});
 		const artifactsDir = getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir);
-		if (artifactConfig.dir === "project" && !warnedArtifactPackageDirs.has(effectiveCwd)) {
-			warnedArtifactPackageDirs.add(effectiveCwd);
-			const warning = getProjectArtifactPackagingWarning(effectiveCwd);
-			if (warning) console.warn(`[pi-subagents] ${warning}`);
-		}
 
 		let sessionRoot: string;
 		if (effectiveParams.sessionDir) {
