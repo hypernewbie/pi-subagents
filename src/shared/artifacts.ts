@@ -24,6 +24,10 @@ export {
 	cleanupOrphanedSessionDirs,
 };
 
+// Upstream call sites still reference the pre-UAA constant name; keep an alias
+// so the legacy path string remains available without duplicating the value.
+export const PROJECT_SUBAGENTS_RELATIVE_DIR = LEGACY_PROJECT_SUBAGENTS_RELATIVE_DIR;
+
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 
 export function getProjectArtifactsDir(cwd: string): string {

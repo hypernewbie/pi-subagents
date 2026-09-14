@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resolveAuthorityDecision, type AuthorityPolicyConfig } from "../../policy/authority.ts";
-import { PROJECT_SUBAGENTS_RELATIVE_DIR } from "../../shared/artifacts.ts";
+import { LEGACY_PROJECT_SUBAGENTS_RELATIVE_DIR } from "../../shared/artifacts.ts";
 import { getAgentDir } from "../../shared/utils.ts";
 import type { ManagedWorktreeProvider, WorktreeNaming, WorktreeProvider } from "../../shared/types.ts";
 
@@ -348,7 +348,7 @@ async function probeWorktreeSource(tx: Pick<SetupTransaction, "git" | "gitChecke
 
 	// pi-subagents writes durable runtime state under .pi/subagents/ by default;
 	// that state must not make managed isolation unusable for later runs.
-	const status = await tx.gitChecked(toplevel, ["status", "--porcelain", "--", `:!${PROJECT_SUBAGENTS_RELATIVE_DIR}`]);
+	const status = await tx.gitChecked(toplevel, ["status", "--porcelain", "--", `:!${LEGACY_PROJECT_SUBAGENTS_RELATIVE_DIR}`]);
 	if (status.trim().length > 0) {
 		throw new Error("worktree isolation requires a clean git working tree. Commit or stash changes first.");
 	}
