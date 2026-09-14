@@ -13,6 +13,7 @@ import { parseHerdrEndpoint } from "../../src/runs/shared/herdr-connection.ts";
 import { formatHerdrMachineRunnerUnsupported, resolveHerdrMachinePlacement } from "../../src/runs/shared/herdr-machine.ts";
 import { buildRunnerChildLaunch } from "../../src/runs/background/runner-child-launch.ts";
 import { runChildSession } from "../../src/runs/background/run-child-session.ts";
+import { getProjectSubagentsDir } from "../../src/shared/artifacts.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
 import registerHerdrPiBridge, { resolveRemoteHerdrResources } from "../../src/extension/herdr-pi-bridge.ts";
 
@@ -113,7 +114,7 @@ describe("pane-native Herdr placement public contracts", { skip: process.platfor
 		fs.mkdirSync(path.join(remote, ".pi", "agents"), { recursive: true }); fs.writeFileSync(path.join(remote, ".pi", "agents", "remote-worker.md"), "---\nname: remote-worker\ndescription: Remote\ntools: read\nskills:\n  - remote-skill\nmemory: { scope: project, path: remote-worker }\ninheritProjectContext: true\ninheritGlobalContext: false\ninheritSkills: true\n---\nREMOTE_AGENT_INSTRUCTIONS\n");
 		fs.mkdirSync(path.join(remote, ".pi", "skills", "remote-skill"), { recursive: true }); fs.writeFileSync(path.join(remote, ".pi", "skills", "remote-skill", "SKILL.md"), "---\ndescription: REMOTE_SKILL_DESCRIPTION\n---\nREMOTE_SKILL_CONTENT\n");
 		fs.mkdirSync(path.join(remote, ".pi", "agent-memory", "remote-worker"), { recursive: true }); fs.writeFileSync(path.join(remote, ".pi", "agent-memory", "remote-worker", "MEMORY.md"), "REMOTE_MEMORY_CONTENT\n");
-		const refinement = path.join(remote, ".pi", "subagents", "refinements", "remote-worker.md"); fs.mkdirSync(path.dirname(refinement), { recursive: true }); fs.writeFileSync(refinement, `<!-- pi-subagents-refinement:v1\n${JSON.stringify({ agent: "remote-worker", revision: 1, updatedAt: new Date().toISOString(), base: { source: "project", filePath: ".pi/agents/remote-worker.md", systemPromptSha256: "abc" }, evidence: {} })}\n-->\n\n\`\`\`pi-subagents-refinement-current\nREMOTE_REFINEMENT_CONTENT\n\`\`\`\n\n\`\`\`pi-subagents-refinement-snapshots-json\n[]\n\`\`\`\n`);
+		const refinement = path.join(getProjectSubagentsDir(remote), "refinements", "remote-worker.md"); fs.mkdirSync(path.dirname(refinement), { recursive: true }); fs.writeFileSync(refinement, `<!-- pi-subagents-refinement:v1\n${JSON.stringify({ agent: "remote-worker", revision: 1, updatedAt: new Date().toISOString(), base: { source: "project", filePath: ".pi/agents/remote-worker.md", systemPromptSha256: "abc" }, evidence: {} })}\n-->\n\n\`\`\`pi-subagents-refinement-current\nREMOTE_REFINEMENT_CONTENT\n\`\`\`\n\n\`\`\`pi-subagents-refinement-snapshots-json\n[]\n\`\`\`\n`);
 		try { const resolved = resolveRemoteHerdrResources(remote, { agent: "remote-worker" }); assert.match(resolved.systemPrompt, /REMOTE_AGENT_INSTRUCTIONS/u); assert.match(resolved.systemPrompt, /REMOTE_SKILL_DESCRIPTION/u); assert.match(resolved.systemPrompt, /REMOTE_MEMORY_CONTENT/u); assert.match(resolved.systemPrompt, /REMOTE_REFINEMENT_CONTENT/u); assert.doesNotMatch(resolved.systemPrompt, /LOCAL_/u); assert.throws(() => resolveRemoteHerdrResources(remote, { agent: "remote-worker", skills: ["missing"] }), /Remote Pi skills not found/u); }
 		finally { fs.rmSync(remote, { recursive: true, force: true }); }
 	});
