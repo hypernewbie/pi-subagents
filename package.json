@@ -60,7 +60,8 @@
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts",
     "test:integration": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
-    "test:all": "npm run test:unit && npm run test:integration"
+    "test:all": "npm run test:unit && npm run test:integration",
+    "postinstall": "node scripts/link-host-peers.mjs"
   },
   "pi": {
     "extensions": [
@@ -108,6 +109,9 @@
     "@types/node": "24.13.3",
     "oxlint": "1.80.0",
     "typescript": "5.9.3",
-    "@earendil-works/pi-coding-agent": "file:./test/fixtures/pi-coding-agent-shim"
+    "@earendil-works/pi-coding-agent": "file:./test/fixtures/pi-coding-agent-shim",
+    "@earendil-works/pi-tui": "0.81.0",
+    "@earendil-works/pi-agent-core": "0.81.0",
+    "@earendil-works/pi-ai": "0.81.0"
   }
 }
