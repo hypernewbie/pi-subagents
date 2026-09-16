@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- Drop the postinstall symlink script (`scripts/link-host-peers.mjs`) and the `postinstall` script entry that wired it into `npm install`. The script created symlinks from the extension's `node_modules/@earendil-works/<peer>` to Pi's bundled peer packages under the host install; it never shipped in the published npm tarball (v0.68.0's `scripts/build-package.mjs` does not copy the `scripts/` directory or the `scripts` field of `package.json`), only running for git-checkout installs. Pi 0.85.1+ resolves the four host peer packages through its loader's alias/virtual-module mechanism regardless of the extension's on-disk layout, so the symlink bridge is no longer required for parent-side loads. The detached-runner side has been covered by upstream since v0.68.0 (#2259 + `runner-peer-preload.mjs`).
+
 ## [0.68.0] - 2026-09-15
 
 ### Highlights
